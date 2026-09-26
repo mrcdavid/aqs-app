@@ -21,17 +21,15 @@ const mm = z.number({ error: 'Enter a number' }).int().min(1).max(20000)
 
 export const unitSchema = z.enum(['sqm', 'lm', 'piece'])
 
-export const materialSchema = z.object({
+/** Material or labour rate (labour rates simply ignore `category`). */
+export const priceItemSchema = z.object({
   code,
   name,
   category: z.enum(['glass', 'aluminum', 'metal', 'hardware', 'other']),
   unit: unitSchema,
-  unit_price: price,
+  price,
 })
-export type MaterialForm = z.input<typeof materialSchema>
-
-export const laborRateSchema = z.object({ code, name, unit: unitSchema, rate: price })
-export type LaborRateForm = z.input<typeof laborRateSchema>
+export type PriceItemForm = z.output<typeof priceItemSchema>
 
 export const productSchema = z
   .object({

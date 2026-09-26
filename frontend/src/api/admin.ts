@@ -229,11 +229,13 @@ export const adminApi = {
   materials: () => api<Material[]>('/admin/materials'),
   createMaterial: (b: Body) => api<Material>('/admin/materials', json('POST', b)),
   updateMaterial: (id: string, b: Body) => api<Material>(`/admin/materials/${id}`, json('PATCH', b)),
+  deleteMaterial: (id: string) => api<void>(`/admin/materials/${id}`, { method: 'DELETE' }),
 
   laborRates: () => api<LaborRate[]>('/admin/labor-rates'),
   createLaborRate: (b: Body) => api<LaborRate>('/admin/labor-rates', json('POST', b)),
   updateLaborRate: (id: string, b: Body) =>
     api<LaborRate>(`/admin/labor-rates/${id}`, json('PATCH', b)),
+  deleteLaborRate: (id: string) => api<void>(`/admin/labor-rates/${id}`, { method: 'DELETE' }),
 
   products: () => api<Product[]>('/admin/products'),
   product: (id: string) => api<ProductDetail>(`/admin/products/${id}`),

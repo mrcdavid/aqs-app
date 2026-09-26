@@ -1,11 +1,12 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Calculator } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 
 import { adminApi, type PricePreview, type ProductDetail } from '../../api/admin'
+import { Button } from '../../components/ui/Button'
 import { Card, ErrorBanner } from '../../components/ui/Card'
-import { buttonClass, Field, inputClass } from '../../components/ui/Field'
+import { Field, inputClass } from '../../components/ui/Field'
 import { messageOf } from '../../lib/errors'
 import { BASIS_LABEL, formatMoney, trimDecimal, UNIT_LABEL } from '../../lib/format'
 import { previewSchema, type PreviewForm } from './schemas'
@@ -32,16 +33,16 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
   const money = (v: string) => (result ? formatMoney(v, result.currency) : v)
 
   return (
-    <Card title="Price preview">
+    <Card title="Price preview" icon={Calculator}>
       <p className="mb-4 text-sm text-muted">
         Try sample sizes to check the template. Uses current prices and settings; nothing is saved.
       </p>
-      <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-wrap items-end gap-3">
+      <form onSubmit={handleSubmit(onSubmit)} noValidate className="grid grid-cols-2 items-end gap-3 sm:grid-cols-5">
         <Field label="Width" htmlFor="pv-width" error={errors.width?.message}>
-          <input id="pv-width" inputMode="decimal" className={`${inputClass} w-28`} {...register('width')} />
+          <input id="pv-width" inputMode="decimal" className={`${inputClass} tabular-nums`} {...register('width')} />
         </Field>
         <Field label="Height" htmlFor="pv-height" error={errors.height?.message}>
-          <input id="pv-height" inputMode="decimal" className={`${inputClass} w-28`} {...register('height')} />
+          <input id="pv-height" inputMode="decimal" className={`${inputClass} tabular-nums`} {...register('height')} />
         </Field>
         <Field label="Unit" htmlFor="pv-unit">
           <select id="pv-unit" className={inputClass} {...register('unit')}>
@@ -55,74 +56,73 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
             type="number"
             min={1}
             max={100}
-            className={`${inputClass} w-20`}
+            className={`${inputClass} tabular-nums`}
             {...register('quantity', { valueAsNumber: true })}
           />
         </Field>
-        <button type="submit" disabled={isSubmitting} className={buttonClass}>
+        <Button type="submit" icon={Calculator} loading={isSubmitting} className="col-span-2 sm:col-span-1">
           Calculate
-        </button>
+        </Button>
       </form>
 
-      <div className="mt-4 space-y-3">
+      <div className="mt-5 space-y-3">
         <ErrorBanner message={error} />
         {result && (
-          <>
+          <div className="animate-fade-up space-y-3">
             {result.warnings.map((w) => (
-              <p key={w} className="flex items-center gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-                <AlertTriangle className="size-4" aria-hidden /> {w}
+              <p key={w} className="flex items-center gap-2 rounded-xl bg-warning-soft p-3 text-sm text-warning">
+                <AlertTriangle className="size-4 shrink-0" aria-hidden /> {w}
               </p>
             ))}
             <p className="text-sm text-muted">
-              {result.width_mm} × {result.height_mm} mm, quantity {result.quantity}
+              {result.width_mm} × {result.height_mm} mm · quantity {result.quantity}
             </p>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-brand-100 text-muted">
+            <div className="overflow-x-auto rounded-xl border border-line">
+              <table className="w-full text-left text-sm tabular-nums">
+                <thead className="bg-surface-2 text-xs tracking-wide text-muted uppercase">
                   <tr>
-                    <th className="py-2 pr-4 font-medium">Line</th>
-                    <th className="py-2 pr-4 font-medium">Measured by</th>
-                    <th className="py-2 pr-4 text-right font-medium">Qty</th>
-                    <th className="py-2 pr-4 text-right font-medium">Price</th>
-                    <th className="py-2 text-right font-medium">Cost</th>
+                    <th className="px-3 py-2 font-medium">Line</th>
+                    <th className="px-3 py-2 font-medium">Measured by</th>
+                    <th className="px-3 py-2 text-right font-medium">Qty</th>
+                    <th className="px-3 py-2 text-right font-medium">Price</th>
+                    <th className="px-3 py-2 text-right font-medium">Cost</th>
                   </tr>
                 </thead>
-                <tbody className="tabular-nums">
+                <tbody>
                   {result.lines.map((l, i) => (
-                    <tr key={i} className="border-b border-brand-50">
-                      <td className="py-2 pr-4">{l.label || l.name}</td>
-                      <td className="py-2 pr-4">{BASIS_LABEL[l.basis]}</td>
-                      <td className="py-2 pr-4 text-right">{trimDecimal(l.quantity)}</td>
-                      <td className="py-2 pr-4 text-right whitespace-nowrap">
+                    <tr key={i} className="border-t border-line">
+                      <td className="px-3 py-2">{l.label || l.name}</td>
+                      <td className="px-3 py-2 text-muted">{BASIS_LABEL[l.basis]}</td>
+                      <td className="px-3 py-2 text-right">{trimDecimal(l.quantity)}</td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
                         {money(l.unit_price)} <span className="text-muted">{UNIT_LABEL[l.unit]}</span>
                       </td>
-                      <td className="py-2 text-right">{money(l.cost)}</td>
+                      <td className="px-3 py-2 text-right">{money(l.cost)}</td>
                     </tr>
                   ))}
                 </tbody>
-                <tfoot className="tabular-nums">
-                  <SummaryRow label="Cost per unit" value={money(result.unit_subtotal)} />
-                  <SummaryRow label={`Subtotal (× ${result.quantity})`} value={money(result.subtotal)} />
-                  <SummaryRow label={`Markup ${trimDecimal(result.markup_percent)}%`} value={money(result.markup)} />
-                  <SummaryRow label={`VAT ${trimDecimal(result.vat_percent)}%`} value={money(result.vat)} />
-                  <SummaryRow label="Total" value={money(result.total)} strong />
-                </tfoot>
               </table>
             </div>
-          </>
+            <dl className="ml-auto max-w-sm space-y-1.5 text-sm tabular-nums">
+              {[
+                ['Cost per piece', result.unit_subtotal],
+                [`Customer unit price (+${trimDecimal(result.markup_percent)}% markup)`, result.unit_price],
+                [`Subtotal (× ${result.quantity})`, result.net],
+                [`VAT ${trimDecimal(result.vat_percent)}%`, result.vat],
+              ].map(([label, value]) => (
+                <div key={label} className="flex justify-between gap-4">
+                  <dt className="text-muted">{label}</dt>
+                  <dd>{money(value)}</dd>
+                </div>
+              ))}
+              <div className="bg-brand-gradient mt-2 flex justify-between gap-4 rounded-xl px-4 py-3 text-base font-semibold text-white">
+                <dt>Total</dt>
+                <dd>{money(result.total)}</dd>
+              </div>
+            </dl>
+          </div>
         )}
       </div>
     </Card>
-  )
-}
-
-function SummaryRow({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
-  return (
-    <tr className={strong ? 'text-base font-semibold' : ''}>
-      <td colSpan={4} className="py-1 pr-4 text-right">
-        {label}
-      </td>
-      <td className="py-1 text-right">{value}</td>
-    </tr>
   )
 }

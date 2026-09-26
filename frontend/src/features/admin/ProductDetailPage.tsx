@@ -1,133 +1,136 @@
-import { ArrowLeft } from 'lucide-react'
+import { Archive, ArchiveRestore, Info, Package, Pencil, Ruler, Tag } from 'lucide-react'
 import { useState } from 'react'
-import { Link, useLoaderData, useRevalidator } from 'react-router'
+import { useLoaderData, useRevalidator } from 'react-router'
 
 import { adminApi } from '../../api/admin'
-import { Card, ErrorBanner, StatusBadge } from '../../components/ui/Card'
-import { linkButtonClass, secondaryButtonClass } from '../../components/ui/Field'
+import { StatusBadge } from '../../components/ui/Badge'
+import { Button } from '../../components/ui/Button'
+import { Card, PageHeader } from '../../components/ui/Card'
 import { messageOf } from '../../lib/errors'
 import { PRODUCT_CATEGORY_LABEL } from '../../lib/format'
-import { PricePreviewPanel } from './PricePreviewPanel'
-import { ProductForm } from './ProductForm'
-import { productSchema } from './schemas'
-import { TemplateEditor } from './TemplateEditor'
+import { confirmAction, toast } from '../../stores/feedback'
 import type { productDetailLoader } from './loaders'
+import { PricePreviewPanel } from './PricePreviewPanel'
+import { ProductFormModal } from './ProductForm'
+import { TemplateEditor } from './TemplateEditor'
 
 export function ProductDetailPage() {
   const { product, materials, laborRates } = useLoaderData<typeof productDetailLoader>()
   const { revalidate } = useRevalidator()
   const [editing, setEditing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [archiving, setArchiving] = useState(false)
 
   async function toggleActive() {
-    setError(null)
+    if (product.is_active) {
+      const ok = await confirmAction({
+        title: `Archive ${product.code}?`,
+        message: 'Customers will no longer be able to choose it. Existing quotations are kept, and you can restore it any time.',
+        confirmLabel: 'Archive product',
+      })
+      if (!ok) return
+    }
+    setArchiving(true)
     try {
       await adminApi.updateProduct(product.id, { is_active: !product.is_active })
+      toast.success(product.is_active ? `${product.code} archived.` : `${product.code} restored — customers can choose it again.`)
       revalidate()
     } catch (err) {
-      setError(messageOf(err))
+      toast.error(messageOf(err))
+    } finally {
+      setArchiving(false)
     }
   }
 
   return (
     <>
-      <div>
-        <Link to="/admin/products" className={linkButtonClass}>
-          <ArrowLeft className="size-4" aria-hidden />
-          All products
-        </Link>
-        <div className="mt-2 flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold">{product.name}</h1>
-          <span className="font-mono text-xs text-muted">{product.code}</span>
-          <StatusBadge active={product.is_active} />
-        </div>
-      </div>
-
-      <Card
-        title="Details"
+      <PageHeader
+        backTo="/admin/products"
+        backLabel="All products"
+        title={product.name}
+        icon={Package}
         actions={
-          !editing && (
-            <div className="flex gap-2">
-              <button type="button" className={secondaryButtonClass} onClick={() => setEditing(true)}>
-                Edit
-              </button>
-              <button type="button" className={secondaryButtonClass} onClick={toggleActive}>
-                {product.is_active ? 'Archive' : 'Restore'}
-              </button>
-            </div>
-          )
+          <>
+            <Button variant="secondary" icon={Pencil} onClick={() => setEditing(true)} className="flex-1 sm:flex-none">
+              Edit details
+            </Button>
+            <Button
+              variant="secondary"
+              icon={product.is_active ? Archive : ArchiveRestore}
+              loading={archiving}
+              onClick={toggleActive}
+              className="flex-1 sm:flex-none"
+            >
+              {product.is_active ? 'Archive' : 'Restore'}
+            </Button>
+          </>
         }
       >
-        {editing ? (
-          <ProductForm
-            // Remount with fresh values whenever the saved product changes.
-            key={product.updated_at}
-            initial={{
-              code: product.code,
-              name: product.name,
-              category: product.category,
-              description: product.description,
-              min_width_mm: product.min_width_mm,
-              max_width_mm: product.max_width_mm,
-              min_height_mm: product.min_height_mm,
-              max_height_mm: product.max_height_mm,
-            }}
-            submitLabel="Save changes"
-            error={error}
-            onCancel={() => {
-              setEditing(false)
-              setError(null)
-            }}
-            onSubmit={async (values) => {
-              setError(null)
-              try {
-                await adminApi.updateProduct(product.id, productSchema.parse(values))
-                setEditing(false)
-                revalidate()
-              } catch (err) {
-                setError(messageOf(err))
-              }
-            }}
-          />
-        ) : (
-          <div className="space-y-3">
-            <ErrorBanner message={error} />
-            <dl className="grid gap-3 text-sm sm:grid-cols-3">
-              <div>
-                <dt className="text-muted">Category</dt>
-                <dd>{PRODUCT_CATEGORY_LABEL[product.category]}</dd>
-              </div>
-              <div>
-                <dt className="text-muted">Width</dt>
-                <dd>
-                  {product.min_width_mm}–{product.max_width_mm} mm
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted">Height</dt>
-                <dd>
-                  {product.min_height_mm}–{product.max_height_mm} mm
-                </dd>
-              </div>
-              {product.description && (
-                <div className="sm:col-span-3">
-                  <dt className="text-muted">Description</dt>
-                  <dd className="whitespace-pre-line">{product.description}</dd>
-                </div>
-              )}
-            </dl>
+        <span className="font-mono text-xs text-muted">{product.code}</span>
+        <StatusBadge active={product.is_active} />
+      </PageHeader>
+
+      <Card title="Details" icon={Info}>
+        <dl className="grid gap-4 text-sm sm:grid-cols-3">
+          <div className="flex items-start gap-3">
+            <Tag className="mt-0.5 size-4 text-muted" aria-hidden />
+            <div>
+              <dt className="text-muted">Category</dt>
+              <dd className="font-medium">{PRODUCT_CATEGORY_LABEL[product.category]}</dd>
+            </div>
           </div>
-        )}
+          <div className="flex items-start gap-3">
+            <Ruler className="mt-0.5 size-4 text-muted" aria-hidden />
+            <div>
+              <dt className="text-muted">Width</dt>
+              <dd className="font-medium tabular-nums">
+                {product.min_width_mm}–{product.max_width_mm} mm
+              </dd>
+            </div>
+          </div>
+          <div className="flex items-start gap-3">
+            <Ruler className="mt-0.5 size-4 rotate-90 text-muted" aria-hidden />
+            <div>
+              <dt className="text-muted">Height</dt>
+              <dd className="font-medium tabular-nums">
+                {product.min_height_mm}–{product.max_height_mm} mm
+              </dd>
+            </div>
+          </div>
+          {product.description && (
+            <div className="sm:col-span-3">
+              <dt className="text-muted">Description</dt>
+              <dd className="whitespace-pre-line">{product.description}</dd>
+            </div>
+          )}
+        </dl>
       </Card>
 
-      <TemplateEditor
-        product={product}
-        materials={materials}
-        laborRates={laborRates}
-        onChanged={revalidate}
-      />
+      <TemplateEditor product={product} materials={materials} laborRates={laborRates} onChanged={revalidate} />
 
       <PricePreviewPanel product={product} />
+
+      <ProductFormModal
+        open={editing}
+        mode="edit"
+        code={product.code}
+        initial={{
+          code: product.code,
+          name: product.name,
+          category: product.category,
+          description: product.description,
+          min_width_mm: product.min_width_mm,
+          max_width_mm: product.max_width_mm,
+          min_height_mm: product.min_height_mm,
+          max_height_mm: product.max_height_mm,
+        }}
+        onClose={() => setEditing(false)}
+        onSave={async (values) => {
+          await adminApi.updateProduct(product.id, values)
+          toast.success('Product details saved.')
+          setEditing(false)
+          revalidate()
+        }}
+      />
     </>
   )
 }
