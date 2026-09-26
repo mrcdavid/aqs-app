@@ -1,17 +1,22 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { Eye, EyeOff, Lock, LogIn, Mail, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useNavigate } from 'react-router'
 
 import { staffLogin } from '../../api/auth'
 import { ApiError } from '../../api/client'
-import { buttonClass, Field, inputClass } from '../../components/ui/Field'
+import { Button } from '../../components/ui/Button'
+import { ErrorBanner } from '../../components/ui/Card'
+import { Field, inputClass } from '../../components/ui/Field'
 import { homeFor } from '../../lib/guards'
 import { staffLoginSchema, type StaffLoginInput } from '../../lib/schemas'
+import { AuthShell } from './AuthShell'
 
 export function StaffLoginPage() {
   const navigate = useNavigate()
   const [serverError, setServerError] = useState<string | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
   const {
     register,
     handleSubmit,
@@ -35,46 +40,61 @@ export function StaffLoginPage() {
   }
 
   return (
-    <section className="mx-auto max-w-sm rounded-xl bg-white p-6 shadow-sm">
-      <h1 className="text-xl font-semibold">Staff login</h1>
-      <p className="mt-1 text-sm text-muted">For admins and the business owner.</p>
-
-      <form onSubmit={handleSubmit(onSubmit)} noValidate className="mt-6 space-y-4">
-        {serverError && (
-          <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
-            {serverError}
-          </p>
-        )}
+    <AuthShell
+      icon={ShieldCheck}
+      title="Staff login"
+      subtitle="For admins and the business owner."
+      footer={
+        <>
+          Customer?{' '}
+          <Link to="/login" className="font-medium text-brand hover:underline">
+            Sign in with Google
+          </Link>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
+        <ErrorBanner message={serverError} />
         <Field label="Email" htmlFor="email" error={errors.email?.message}>
-          <input
-            id="email"
-            type="email"
-            autoComplete="username"
-            className={inputClass}
-            aria-invalid={!!errors.email}
-            {...register('email')}
-          />
+          <div className="relative">
+            <Mail className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" aria-hidden />
+            <input
+              id="email"
+              type="email"
+              autoComplete="username"
+              autoFocus
+              className={`${inputClass} pl-10`}
+              aria-invalid={!!errors.email}
+              {...register('email')}
+            />
+          </div>
         </Field>
         <Field label="Password" htmlFor="password" error={errors.password?.message}>
-          <input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            className={inputClass}
-            aria-invalid={!!errors.password}
-            {...register('password')}
-          />
+          <div className="relative">
+            <Lock className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" aria-hidden />
+            <input
+              id="password"
+              type={showPassword ? 'text' : 'password'}
+              autoComplete="current-password"
+              className={`${inputClass} pr-11 pl-10`}
+              aria-invalid={!!errors.password}
+              {...register('password')}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              title={showPassword ? 'Hide password' : 'Show password'}
+              className="absolute top-1/2 right-1.5 grid size-8 -translate-y-1/2 place-items-center rounded-lg text-muted hover:bg-surface-2 hover:text-ink"
+            >
+              {showPassword ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
+            </button>
+          </div>
         </Field>
-        <button type="submit" disabled={isSubmitting} className={`${buttonClass} w-full`}>
+        <Button type="submit" icon={LogIn} loading={isSubmitting} className="h-12 w-full text-base">
           {isSubmitting ? 'Signing in…' : 'Sign in'}
-        </button>
+        </Button>
       </form>
-
-      <p className="mt-4 text-center text-sm">
-        <Link to="/login" className="text-brand-600 hover:underline">
-          Customer sign-in
-        </Link>
-      </p>
-    </section>
+    </AuthShell>
   )
 }

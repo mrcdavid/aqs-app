@@ -1,9 +1,9 @@
-import { Plus } from 'lucide-react'
+import { ChevronRight, FilePlus2, FileText } from 'lucide-react'
 import { Link, useLoaderData } from 'react-router'
 
-import { Card, PageHeader } from '../../components/ui/Card'
-import { buttonClass } from '../../components/ui/Field'
-import { QuotationStatusBadge } from '../../components/ui/QuotationStatusBadge'
+import { QuotationStatusBadge } from '../../components/ui/Badge'
+import { ButtonLink } from '../../components/ui/Button'
+import { Card, EmptyState, PageHeader } from '../../components/ui/Card'
 import { formatDate, formatMoney } from '../../lib/format'
 import type { quotationsLoader } from './loader'
 
@@ -12,39 +12,49 @@ export function QuotationsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <PageHeader title="My quotations" description="Your requests and their approval status." />
-        <Link to="/app/quotations/new" className={buttonClass}>
-          <Plus className="size-4" aria-hidden />
-          New quotation
-        </Link>
-      </div>
+      <PageHeader
+        title="My quotations"
+        description="Your requests and their approval status."
+        icon={FileText}
+        actions={
+          <ButtonLink to="/app/quotations/new" icon={FilePlus2} className="w-full sm:w-auto">
+            New quotation
+          </ButtonLink>
+        }
+      />
 
-      <Card>
+      <Card className="p-2 sm:p-2">
         {quotations.length === 0 ? (
-          <div className="py-6 text-center">
-            <p className="text-muted">You haven't requested a quotation yet.</p>
-            <Link to="/app/quotations/new" className="mt-2 inline-block text-brand-600 hover:underline">
-              Get your first quotation
-            </Link>
-          </div>
+          <EmptyState
+            icon={FileText}
+            title="No quotations yet"
+            text="Pick a product, enter the size, and get an instant estimate."
+            action={
+              <ButtonLink to="/app/quotations/new" icon={FilePlus2}>
+                Get your first quotation
+              </ButtonLink>
+            }
+          />
         ) : (
-          <ul className="divide-y divide-brand-50">
+          <ul className="divide-y divide-line">
             {quotations.map((q) => (
               <li key={q.id}>
-                <Link
-                  to={`/app/quotations/${q.id}`}
-                  className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg px-2 py-3 hover:bg-brand-50"
-                >
+                <Link to={`/app/quotations/${q.id}`} className="group flex items-center gap-3 rounded-xl px-3 py-3 hover:bg-surface-2/70 sm:gap-4">
+                  <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand">
+                    <FileText className="size-5" aria-hidden />
+                  </span>
                   <div className="min-w-0 flex-1">
-                    <p className="font-medium">{q.product_name}</p>
-                    <p className="text-sm text-muted">
+                    <p className="truncate font-medium">{q.product_name}</p>
+                    <p className="truncate text-sm text-muted">
                       {q.width_mm} × {q.height_mm} mm · qty {q.quantity} · {formatDate(q.created_at)}
-                      {q.number && <> · {q.number}</>}
                     </p>
+                    {q.number && <p className="font-mono text-xs text-muted">{q.number}</p>}
                   </div>
-                  <span className="font-medium tabular-nums">{formatMoney(q.total, q.currency)}</span>
-                  <QuotationStatusBadge status={q.status} />
+                  <div className="flex flex-col items-end gap-1.5">
+                    <span className="font-semibold tabular-nums whitespace-nowrap">{formatMoney(q.total, q.currency)}</span>
+                    <QuotationStatusBadge status={q.status} />
+                  </div>
+                  <ChevronRight className="hidden size-5 text-muted transition group-hover:translate-x-0.5 sm:block" aria-hidden />
                 </Link>
               </li>
             ))}

@@ -1,8 +1,12 @@
-import { LogIn } from 'lucide-react'
+import { LogIn, ShieldCheck } from 'lucide-react'
+import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 
 import { GOOGLE_LOGIN_URL } from '../../api/auth'
-import { buttonClass } from '../../components/ui/Field'
+import { buttonStyles } from '../../components/ui/buttonStyles'
+import { ErrorBanner } from '../../components/ui/Card'
+import { Spinner } from '../../components/ui/Spinner'
+import { AuthShell, GoogleMark } from './AuthShell'
 
 const ERRORS: Record<string, string> = {
   domain: 'Please sign in with your @up.edu.ph Google account.',
@@ -13,28 +17,41 @@ const ERRORS: Record<string, string> = {
 
 export function LoginPage() {
   const [params] = useSearchParams()
+  const [leaving, setLeaving] = useState(false)
   const errorCode = params.get('error')
   const error = errorCode ? (ERRORS[errorCode] ?? ERRORS.google) : null
 
   return (
-    <section className="mx-auto max-w-sm rounded-xl bg-white p-6 shadow-sm">
-      <h1 className="text-xl font-semibold">Sign in</h1>
-      <p className="mt-1 text-sm text-muted">Use your @up.edu.ph Google account.</p>
-      {error && (
-        <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">
-          {error}
+    <AuthShell
+      icon={LogIn}
+      title="Sign in"
+      subtitle="Use your @up.edu.ph Google account to request quotations."
+      footer={
+        <>
+          Staff member?{' '}
+          <Link to="/staff/login" className="font-medium text-brand hover:underline">
+            Staff login
+          </Link>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <ErrorBanner message={error} />
+        {/* Full-page navigation, not fetch: the backend redirects to Google. */}
+        <a
+          href={GOOGLE_LOGIN_URL}
+          onClick={() => setLeaving(true)}
+          aria-busy={leaving || undefined}
+          className={buttonStyles('secondary', 'md', 'h-12 w-full text-base')}
+        >
+          {leaving ? <Spinner className="size-5" /> : <GoogleMark />}
+          {leaving ? 'Opening Google…' : 'Continue with Google'}
+        </a>
+        <p className="flex items-start gap-2 rounded-xl bg-surface-2 p-3 text-xs text-muted">
+          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
+          We only receive your name and email from Google. We never see your Google password.
         </p>
-      )}
-      {/* Full-page navigation, not fetch: the backend redirects to Google. */}
-      <a href={GOOGLE_LOGIN_URL} className={`${buttonClass} mt-6 w-full`}>
-        <LogIn className="size-4" aria-hidden />
-        Continue with Google
-      </a>
-      <p className="mt-4 text-center text-sm">
-        <Link to="/staff/login" className="text-brand-600 hover:underline">
-          Staff login
-        </Link>
-      </p>
-    </section>
+      </div>
+    </AuthShell>
   )
 }

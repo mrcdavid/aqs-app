@@ -1,20 +1,17 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { MapPin, Save, UserRound, X } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useLoaderData, useNavigate } from 'react-router'
 
 import { saveProfile } from '../../api/profile'
-import { buttonClass, Field, inputClass } from '../../components/ui/Field'
+import { Button, ButtonLink } from '../../components/ui/Button'
+import { Card, ErrorBanner, PageHeader } from '../../components/ui/Card'
+import { Field, inputClass } from '../../components/ui/Field'
+import { messageOf } from '../../lib/errors'
 import { profileSchema, type ProfileInput } from '../../lib/schemas'
+import { toast } from '../../stores/feedback'
 import type { profileLoader } from './loader'
-
-const TEXT_FIELDS: { name: Exclude<keyof ProfileInput, 'age'>; label: string; auto: string }[] = [
-  { name: 'full_name', label: 'Full name', auto: 'name' },
-  { name: 'contact_number', label: 'Mobile number', auto: 'tel' },
-  { name: 'address_line', label: 'Street address', auto: 'street-address' },
-  { name: 'city', label: 'City / Municipality', auto: 'address-level2' },
-  { name: 'province', label: 'Province', auto: 'address-level1' },
-]
 
 export function ProfilePage() {
   const { profile } = useLoaderData<typeof profileLoader>()
@@ -33,63 +30,66 @@ export function ProfilePage() {
     setServerError(null)
     try {
       await saveProfile(values)
-      navigate('/app/quotations')
-    } catch {
-      setServerError('Could not save your profile. Check the fields and try again.')
+      toast.success(profile ? 'Profile saved.' : 'Profile saved. You can now request quotations.')
+      navigate(profile ? '/app/quotations' : '/app/quotations/new')
+    } catch (err) {
+      setServerError(messageOf(err))
     }
   }
 
-  return (
-    <section className="mx-auto max-w-lg rounded-xl bg-white p-6 shadow-sm">
-      <h1 className="text-xl font-semibold">{profile ? 'Your profile' : 'Set up your profile'}</h1>
-      <p className="mt-1 text-sm text-muted">
-        We use this on your quotation. You can change it later.
-      </p>
+  const text = (name: Exclude<keyof ProfileInput, 'age'>, label: string, auto: string, extra = {}) => (
+    <Field label={label} htmlFor={name} error={errors[name]?.message}>
+      <input id={name} autoComplete={auto} className={inputClass} aria-invalid={!!errors[name]} {...extra} {...register(name)} />
+    </Field>
+  )
 
-      <form onSubmit={handleSubmit(onSubmit)} noValidate className="mt-6 space-y-4">
-        {serverError && (
-          <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
-            {serverError}
-          </p>
-        )}
-        {TEXT_FIELDS.slice(0, 1).map((f) => (
-          <Field key={f.name} label={f.label} htmlFor={f.name} error={errors[f.name]?.message}>
-            <input
-              id={f.name}
-              autoComplete={f.auto}
-              className={inputClass}
-              aria-invalid={!!errors[f.name]}
-              {...register(f.name)}
-            />
-          </Field>
-        ))}
-        <Field label="Age" htmlFor="age" error={errors.age?.message}>
-          <input
-            id="age"
-            type="number"
-            inputMode="numeric"
-            min={18}
-            max={120}
-            className={inputClass}
-            aria-invalid={!!errors.age}
-            {...register('age', { valueAsNumber: true })}
-          />
-        </Field>
-        {TEXT_FIELDS.slice(1).map((f) => (
-          <Field key={f.name} label={f.label} htmlFor={f.name} error={errors[f.name]?.message}>
-            <input
-              id={f.name}
-              autoComplete={f.auto}
-              className={inputClass}
-              aria-invalid={!!errors[f.name]}
-              {...register(f.name)}
-            />
-          </Field>
-        ))}
-        <button type="submit" disabled={isSubmitting} className={`${buttonClass} w-full`}>
-          {isSubmitting ? 'Saving…' : 'Save and continue'}
-        </button>
+  return (
+    <div className="mx-auto max-w-2xl space-y-6">
+      <PageHeader
+        title={profile ? 'Your profile' : 'Set up your profile'}
+        description="We print these details on your quotations. You can change them any time."
+        icon={UserRound}
+      />
+      <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6">
+        <ErrorBanner message={serverError} />
+        <fieldset disabled={isSubmitting} className="space-y-6">
+          <Card title="About you" icon={UserRound}>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="sm:col-span-2">{text('full_name', 'Full name', 'name', { autoFocus: !profile })}</div>
+              <Field label="Age" htmlFor="age" error={errors.age?.message}>
+                <input
+                  id="age"
+                  type="number"
+                  inputMode="numeric"
+                  min={18}
+                  max={120}
+                  className={inputClass}
+                  aria-invalid={!!errors.age}
+                  {...register('age', { valueAsNumber: true })}
+                />
+              </Field>
+              {text('contact_number', 'Mobile number', 'tel', { inputMode: 'tel', placeholder: '09XX XXX XXXX' })}
+            </div>
+          </Card>
+          <Card title="Address" icon={MapPin}>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="sm:col-span-2">{text('address_line', 'Street address', 'street-address')}</div>
+              {text('city', 'City / Municipality', 'address-level2')}
+              {text('province', 'Province', 'address-level1')}
+            </div>
+          </Card>
+        </fieldset>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          {profile && (
+            <ButtonLink to="/app/quotations" variant="secondary" icon={X}>
+              Cancel
+            </ButtonLink>
+          )}
+          <Button type="submit" icon={Save} loading={isSubmitting}>
+            {profile ? 'Save changes' : 'Save and continue'}
+          </Button>
+        </div>
       </form>
-    </section>
+    </div>
   )
 }
