@@ -1,16 +1,17 @@
-import { Link, NavLink, useLoaderData } from 'react-router'
+import { Ban, CheckCircle2, ChevronRight, Clock, FileText, Inbox, Layers, MapPin, XCircle } from 'lucide-react'
+import { Link, useLoaderData } from 'react-router'
 
-import { Card, PageHeader } from '../../components/ui/Card'
-import { QuotationStatusBadge } from '../../components/ui/QuotationStatusBadge'
+import { QuotationStatusBadge } from '../../components/ui/Badge'
+import { Card, EmptyState, PageHeader } from '../../components/ui/Card'
 import { formatDate, formatMoney } from '../../lib/format'
 import type { adminQuotationsLoader } from './loaders'
 
 const TABS = [
-  { status: 'pending', label: 'Pending' },
-  { status: 'approved', label: 'Approved' },
-  { status: 'rejected', label: 'Rejected' },
-  { status: 'cancelled', label: 'Cancelled' },
-  { status: 'all', label: 'All' },
+  { status: 'pending', label: 'Pending', icon: Clock },
+  { status: 'approved', label: 'Approved', icon: CheckCircle2 },
+  { status: 'rejected', label: 'Rejected', icon: XCircle },
+  { status: 'cancelled', label: 'Cancelled', icon: Ban },
+  { status: 'all', label: 'All', icon: Layers },
 ] as const
 
 export function AdminQuotationsPage() {
@@ -18,69 +19,69 @@ export function AdminQuotationsPage() {
 
   return (
     <>
-      <PageHeader title="Quotations" description="Review customer requests and issue official quotations." />
+      <PageHeader title="Quotations" description="Review customer requests and issue official quotations." icon={FileText} />
 
-      <nav aria-label="Filter by status" className="flex gap-1 overflow-x-auto">
-        {TABS.map((t) => (
-          <NavLink
-            key={t.status}
-            to={`/admin/quotations?status=${t.status}`}
-            className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm ${
-              status === t.status ? 'bg-brand-600 text-white' : 'bg-white hover:bg-brand-100'
+      <nav aria-label="Filter by status" className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none]">
+        {TABS.map(({ status: s, label, icon: Icon }) => (
+          <Link
+            key={s}
+            to={`/admin/quotations?status=${s}`}
+            aria-current={status === s ? 'page' : undefined}
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-sm font-medium transition ${
+              status === s
+                ? 'bg-brand-gradient text-white shadow-sm shadow-indigo-500/25'
+                : 'border border-line bg-surface text-muted hover:text-ink'
             }`}
           >
-            {t.label}
-          </NavLink>
+            <Icon className="size-4" aria-hidden />
+            {label}
+          </Link>
         ))}
       </nav>
 
-      <Card>
+      <Card className="p-2 sm:p-2">
         {quotations.length === 0 ? (
-          <p className="text-muted">No quotations here.</p>
+          <EmptyState
+            icon={Inbox}
+            title={status === 'pending' ? 'Nothing waiting for review' : 'No quotations here'}
+            text={status === 'pending' ? 'New customer requests will appear here.' : undefined}
+          />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-brand-100 text-muted">
-                <tr>
-                  <th className="py-2 pr-4 font-medium">Requested</th>
-                  <th className="py-2 pr-4 font-medium">Customer</th>
-                  <th className="py-2 pr-4 font-medium">Product</th>
-                  <th className="py-2 pr-4 text-right font-medium">Total</th>
-                  <th className="py-2 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {quotations.map((q) => (
-                  <tr key={q.id} className="border-b border-brand-50 last:border-0 hover:bg-brand-50">
-                    <td className="py-2 pr-4 whitespace-nowrap">
-                      <Link to={`/admin/quotations/${q.id}`} className="text-brand-600 hover:underline">
-                        {formatDate(q.created_at)}
-                      </Link>
-                      {q.number && <div className="font-mono text-xs text-muted">{q.number}</div>}
-                    </td>
-                    <td className="py-2 pr-4">
-                      <div>{q.customer_name}</div>
-                      <div className="text-xs text-muted">
+          <ul className="divide-y divide-line">
+            {quotations.map((q) => (
+              <li key={q.id}>
+                <Link
+                  to={`/admin/quotations/${q.id}`}
+                  className="group flex items-center gap-3 rounded-xl px-3 py-3 hover:bg-surface-2/70 sm:gap-4"
+                >
+                  <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand">
+                    <FileText className="size-5" aria-hidden />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="font-medium">{q.customer_name}</span>
+                      {q.number && <span className="font-mono text-xs text-muted">{q.number}</span>}
+                    </div>
+                    <p className="truncate text-sm text-muted">
+                      {q.product_name} · {q.width_mm} × {q.height_mm} mm · qty {q.quantity}
+                    </p>
+                    <p className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-muted">
+                      <span className="inline-flex items-center gap-1">
+                        <MapPin className="size-3.5" aria-hidden />
                         {q.customer_city}, {q.customer_province}
-                      </div>
-                    </td>
-                    <td className="py-2 pr-4">
-                      <div>{q.product_name}</div>
-                      <div className="text-xs text-muted">
-                        {q.width_mm} × {q.height_mm} mm · qty {q.quantity}
-                      </div>
-                    </td>
-                    <td className="py-2 pr-4 text-right tabular-nums whitespace-nowrap">
-                      {formatMoney(q.total, q.currency)}
-                    </td>
-                    <td className="py-2">
-                      <QuotationStatusBadge status={q.status} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      </span>
+                      <span>{formatDate(q.created_at)}</span>
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1.5">
+                    <span className="font-semibold tabular-nums whitespace-nowrap">{formatMoney(q.total, q.currency)}</span>
+                    <QuotationStatusBadge status={q.status} />
+                  </div>
+                  <ChevronRight className="hidden size-5 shrink-0 text-muted transition group-hover:translate-x-0.5 sm:block" aria-hidden />
+                </Link>
+              </li>
+            ))}
+          </ul>
         )}
       </Card>
     </>

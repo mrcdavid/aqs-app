@@ -49,7 +49,7 @@ export function DailyChart({ days, currency }: { days: DayPoint[]; currency: str
           {ticks.map((t) => (
             <div
               key={t}
-              className="absolute inset-x-0 border-t border-brand-100"
+              className="absolute inset-x-0 border-t border-line"
               style={{ bottom: `${(t / max) * 100}%` }}
               aria-hidden
             />
@@ -101,7 +101,7 @@ export function DailyChart({ days, currency }: { days: DayPoint[]; currency: str
       </div>
 
       <details className="text-sm">
-        <summary className="cursor-pointer text-brand-600">Show as table</summary>
+        <summary className="cursor-pointer font-medium text-brand">Show as table</summary>
         <div className="mt-2 max-h-64 overflow-auto">
           <table className="w-full text-left tabular-nums">
             <thead className="text-muted">
@@ -114,7 +114,7 @@ export function DailyChart({ days, currency }: { days: DayPoint[]; currency: str
             </thead>
             <tbody>
               {days.map((d) => (
-                <tr key={d.day} className="border-t border-brand-50">
+                <tr key={d.day} className="border-t border-line">
                   <td className="py-1 pr-4">{formatDate(d.day)}</td>
                   <td className="py-1 pr-4 text-right">{d.requested}</td>
                   <td className="py-1 pr-4 text-right">{d.approved}</td>
