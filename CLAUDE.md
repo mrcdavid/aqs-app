@@ -50,7 +50,7 @@ becomes the official PDF and feeds the dashboard.
 | 2026-09-26 | audit_log is append-only via a DB trigger; users with audit history can only be soft-deleted. |
 | 2026-09-26 | Profile: full name, age 18–120, PH mobile (09… / +639…), street, city, province. |
 | 2026-09-26 | Pricing = admin-built templates. Line cost = measurement × factor × (1 + waste%) × item price. Customer unit price = cost per piece × (1 + markup%); amount = unit price × qty; then VAT%. Round half-up to centavos at each step. |
-| 2026-09-26 | Defaults: markup 0%, VAT 12%, PHP (single `pricing_settings` row). Materials/labour/products are archived, never deleted; an item's unit can't change while a template uses it. |
+| 2026-09-26 | Defaults: markup 0%, VAT 12%, PHP (single `pricing_settings` row). Products are archived, never deleted. Materials/labour rates can be archived, or deleted one at a time only when no template uses them (409 otherwise). An item's unit can't change while a template uses it. |
 | 2026-09-26 | Quotations: one product per quote (qty 1–100). Prices frozen in `quotations.snapshot` at Process; business details frozen at approval. Customers see unit price/VAT/total only, never costs or markup. |
 | 2026-09-26 | Approval assigns `AQS-<year>-<6 digits>` (Philippine time, counter per year), valid 30 days (editable), stores the final PDF once in `backend/storage/quotes/`. Rejection needs a note; the customer sees notes. |
 | 2026-09-26 | Limits: 10 quote requests/min per IP, max 20 pending per customer. |
@@ -58,6 +58,7 @@ becomes the official PDF and feeds the dashboard.
 | 2026-09-26 | Dashboard at `/admin`: figures count requests created in a PHT date range (max 366 days); approval rate = approved ÷ (approved + rejected). |
 | 2026-09-26 | User management: all staff can view; only super_admin can change. No self-changes. Disable/delete/role change/password reset revoke sessions. Deletes are soft. Customers can't be promoted to staff. Active sessions page is super_admin only. |
 | 2026-09-26 | Admin pages are lazy-loaded (`features/admin/pages.ts`) so customers never download them. |
+| 2026-09-27 | UI: Blue→Indigo gradient; Light/Dark/System theme (Zustand + localStorage `aqs-theme`, class-based dark mode); Inter via `@fontsource-variable/inter`; add/edit/confirm in native `<dialog>` modals (`components/ui/Modal.tsx`, `confirmAction()` in `stores/feedback.ts`); toasts; shared UI kit in `components/ui/`. Colours only via semantic tokens in `index.css` (bg-surface, text-ink, border-line, bg-brand…). |
 
 Assumptions not yet confirmed (ask before relying on them heavily):
 - Currency is PHP (₱) and VAT defaults to 12%, editable by admin.
@@ -73,6 +74,7 @@ Assumptions not yet confirmed (ask before relying on them heavily):
 - React Hook Form + Zod for forms
 - Zustand only for small UI state (sidebar, theme) — **never** auth or user data
 - `lucide-react` for icons
+- `@fontsource-variable/inter` (self-hosted font)
 - Lint: oxlint (Vite default)
 
 **Backend** (`/backend`)
