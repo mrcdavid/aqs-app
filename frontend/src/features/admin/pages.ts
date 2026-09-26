@@ -1,0 +1,13 @@
+// Entry point for the lazily loaded admin area (see router.tsx).
+export { AdminLayout } from './AdminLayout'
+export { AdminQuotationDetailPage } from './AdminQuotationDetailPage'
+export { AdminQuotationsPage } from './AdminQuotationsPage'
+export { AuditLogPage } from './AuditLogPage'
+export { DashboardPage } from './DashboardPage'
+export { LaborRatesPage } from './LaborRatesPage'
+export { MaterialsPage } from './MaterialsPage'
+export { PricingSettingsPage } from './PricingSettingsPage'
+export { ProductDetailPage } from './ProductDetailPage'
+export { ProductsPage } from './ProductsPage'
+export { SessionsPage } from './SessionsPage'
+export { UsersPage } from './UsersPage'

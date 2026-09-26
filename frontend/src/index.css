@@ -1,0 +1,14 @@
+@import 'tailwindcss';
+
+/* Design tokens. Use as Tailwind classes, e.g. bg-brand-600, text-ink. */
+@theme {
+  --color-brand-50: oklch(0.97 0.02 240);
+  --color-brand-100: oklch(0.93 0.04 240);
+  --color-brand-500: oklch(0.6 0.15 240);
+  --color-brand-600: oklch(0.52 0.16 240);
+  --color-brand-700: oklch(0.45 0.15 240);
+  --color-ink: oklch(0.25 0.02 250);
+  --color-muted: oklch(0.55 0.02 250);
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}

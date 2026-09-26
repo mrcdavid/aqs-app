@@ -1,0 +1,62 @@
+# plan.md — Automatic Quotation System Application
+
+Read it fully before making changes. When a rule here conflicts with a habit, follow this file.
+
+---
+
+## 1. What we are building
+
+A web application for **AQS APP** that produces **automatic quotation PDF file**
+for glass, aluminum, and metal fabrication jobs (sliding windows, sliding doors, and window grills etc.).
+
+Three roles only:
+
+| Role          | Who                               | Can do |
+|---------------|-----------------------------------|--------|
+| `user`        | Customers / walk-in clients       | Register, log in, create quotation request, view/print the approved quotation PDF generate file, manage own profile |
+| `admin` | Trusted staff    | Everything a user can + manage list of products, materials & prices, product templates, labor rates, markup/VAT settings, all quotation requests, users, audit log |
+| `super_admin` | Business owner | Everything a user and admin can + can delete admin and can delete users
+
+---
+
+## 2. Tech stack (pinned choices — do not swap without asking)
+
+**Frontend** (`/frontend`)
+- React 18+ with **TypeScript** (strict mode), built with **Vite**
+- **Tailwind CSS v4** (`@tailwindcss/vite` plugin, config in CSS via `@theme`)
+- **React Router** (data router, `createBrowserRouter`)
+- **React Hook Form + Zod** for forms and client-side validation
+- **Zustand** only for small UI state (sidebar open, theme) — never for auth tokens
+- `lucide-react` for icons
+
+**Backend** (`/backend`)
+- **Python 3.12+**, **FastAPI**
+- **SQLAlchemy 2.0** (async, typed `Mapped[]` models) + **asyncpg**
+- **Alembic** for migrations
+- **Pydantic v2** + `pydantic-settings` for config
+- **brypt or JWT**  for password hashing
+- **WeasyPrint** or **ReportLab** for PDF estimates
+
+
+**Database**: **PostgreSQL** - use my pg admin 4 in local machine, create db, tables, fields, and db connections automatically. 
+
+
+## 3. System Architecture
+
+
+
+
+## 4. How the systen run
+
+- User will login using up.edu.ph emails only. Use Oauth for this. User will create profile first (name, age, address, etc.) then will now proceed with quotation request.
+- For quotation request, the user will choose what product he/she wants. Then will input the length and height of that product, in cm or inch. Then process button will click for triggering PDF generation for viewing and printing of the automatic requested quotation for how much it will cost for that selected product.
+- the admin will check the quotation request and if approved, note all details for dashboard monitoring (how many quotations per day, locations, total cost per projects, etc. - all dashboard feature)
+- the super admin will monitor the active user, and active admin. Can view all logs and and have access to modifying inputs.
+
+## 5. Security
+
+- Use CSRF, and CORS middleware if necessary or suggest new much better one
+- Use secure tokens, do not store in localstorage.
+
+
+
