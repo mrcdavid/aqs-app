@@ -91,6 +91,26 @@ async def _item_in_use(db: DB, column: Any, item_id: uuid.UUID) -> bool:
     ) is not None
 
 
+async def _ensure_deletable(db: DB, column: Any, item_id: uuid.UUID, what: str) -> None:
+    """Only items no template uses can be deleted; old quotations keep their frozen prices."""
+    names = (
+        await db.scalars(
+            select(Product.name)
+            .join(ProductComponent, ProductComponent.product_id == Product.id)
+            .where(column == item_id)
+            .distinct()
+            .order_by(Product.name)
+        )
+    ).all()
+    if names:
+        listed = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"This {what} is used in {len(names)} product template(s): {listed}. "
+            "Remove it from those templates first, or archive it instead.",
+        )
+
+
 # ---------- materials ----------
 
 
@@ -158,6 +178,25 @@ async def update_material(
     return MaterialOut.model_validate(material)
 
 
+@router.delete("/materials/{material_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_material(
+    material_id: uuid.UUID, user: StaffUser, db: DB, request: Request
+) -> None:
+    material = await get_or_404(db, Material, material_id, "Material")
+    await _ensure_deletable(db, ProductComponent.material_id, material.id, "material")
+    audit.record(
+        db,
+        "material.deleted",
+        request=request,
+        actor_id=user.id,
+        entity="material",
+        entity_id=material.id,
+        details={"before": audit.snapshot(material, MATERIAL_FIELDS)},
+    )
+    await db.delete(material)
+    await db.commit()
+
+
 # ---------- labour rates ----------
 
 
@@ -221,6 +260,23 @@ async def update_labor_rate(
     await db.commit()
     await db.refresh(rate)
     return LaborRateOut.model_validate(rate)
+
+
+@router.delete("/labor-rates/{rate_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_labor_rate(rate_id: uuid.UUID, user: StaffUser, db: DB, request: Request) -> None:
+    rate = await get_or_404(db, LaborRate, rate_id, "Labour rate")
+    await _ensure_deletable(db, ProductComponent.labor_rate_id, rate.id, "labour rate")
+    audit.record(
+        db,
+        "labor_rate.deleted",
+        request=request,
+        actor_id=user.id,
+        entity="labor_rate",
+        entity_id=rate.id,
+        details={"before": audit.snapshot(rate, LABOR_FIELDS)},
+    )
+    await db.delete(rate)
+    await db.commit()
 
 
 # ---------- products ----------

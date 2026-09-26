@@ -3,10 +3,11 @@
 from typing import Any
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.main import app
 from app.models import AuditLog, Role
 from tests.test_auth import fake_google, make_staff, staff_login
 
@@ -261,3 +262,47 @@ async def test_settings_put_requires_every_field(admin: AsyncClient):
     }
     r = await admin.put(f"{API}/pricing-settings", json=partial)
     assert r.status_code == 422
+
+
+# ---------- delete (single item, only when unused) ----------
+
+
+async def test_delete_unused_material_and_labor_rate(admin: AsyncClient, db: AsyncSession):
+    m = await create(admin, "materials", material("GL-6MM", "sqm", "850"))
+    r = await create(
+        admin, "labor-rates", {"code": "INSTALL", "name": "Install", "unit": "sqm", "rate": "650"}
+    )
+    assert (await admin.delete(f"{API}/materials/{m['id']}")).status_code == 204
+    assert (await admin.delete(f"{API}/labor-rates/{r['id']}")).status_code == 204
+    assert (await admin.get(f"{API}/materials")).json() == []
+    assert (await admin.get(f"{API}/labor-rates")).json() == []
+    actions = (await db.scalars(select(AuditLog.action))).all()
+    assert "material.deleted" in actions and "labor_rate.deleted" in actions
+
+
+async def test_delete_in_use_is_refused(admin: AsyncClient):
+    pid = await build_sliding_window(admin)
+    components = (await admin.get(f"{API}/products/{pid}")).json()["components"]
+    glass_id = components[0]["material_id"]
+    labor_id = components[-1]["labor_rate_id"]
+    r = await admin.delete(f"{API}/materials/{glass_id}")
+    assert r.status_code == 409 and "Standard sliding window" in r.json()["detail"]
+    assert (await admin.delete(f"{API}/labor-rates/{labor_id}")).status_code == 409
+    assert len((await admin.get(f"{API}/materials")).json()) == 4  # nothing was removed
+
+
+async def test_delete_unknown_and_forbidden(
+    admin: AsyncClient, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert (await admin.delete(f"{API}/materials/{missing}")).status_code == 404
+    m = await create(admin, "materials", material("GL-6MM", "sqm", "850"))
+    customer = AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver")
+    await customer.get("/api/v1/health")
+    customer.headers["X-CSRF-Token"] = customer.cookies["aqs_csrf"]
+    try:
+        fake_google(monkeypatch)
+        await customer.get("/api/v1/auth/google/callback")
+        assert (await customer.delete(f"{API}/materials/{m['id']}")).status_code == 403
+    finally:
+        await customer.aclose()
