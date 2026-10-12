@@ -3,6 +3,7 @@ import { createBrowserRouter } from 'react-router'
 import { AppLayout, RouteError } from './components/layout/AppLayout'
 import {
   adminLayoutLoader,
+  adminNewQuotationLoader,
   adminQuotationDetailLoader,
   adminQuotationsLoader,
   auditLogLoader,
@@ -75,6 +76,11 @@ export const router = createBrowserRouter([
           { path: 'users', lazy: admin('UsersPage'), loader: usersLoader },
           { path: 'sessions', lazy: admin('SessionsPage'), loader: sessionsLoader },
           { path: 'quotations', lazy: admin('AdminQuotationsPage'), loader: adminQuotationsLoader },
+          {
+            path: 'quotations/new',
+            lazy: admin('AdminNewQuotationPage'),
+            loader: adminNewQuotationLoader,
+          },
           {
             path: 'quotations/:quotationId',
             lazy: admin('AdminQuotationDetailPage'),
