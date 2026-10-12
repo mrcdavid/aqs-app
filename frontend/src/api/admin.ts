@@ -2,7 +2,7 @@
 // into numbers for arithmetic — the server does all pricing.
 
 import { api } from './client'
-import type { Quotation, QuotationStatus, QuotationSummary } from './quotations'
+import type { Quotation, QuotationRequest, QuotationStatus, QuotationSummary } from './quotations'
 
 export type PriceUnit = 'sqm' | 'lm' | 'piece'
 export type MaterialCategory = 'glass' | 'aluminum' | 'metal' | 'hardware' | 'other'
@@ -44,11 +44,21 @@ export interface Product {
   updated_at: string
 }
 
+/** An optional add-on of a product (e.g. "Open back aluminum"), made of template lines. */
+export interface ProductOption {
+  id: string
+  name: string
+  description: string
+  sort_order: number
+}
+
 export interface Component {
   id: string
   kind: 'material' | 'labor'
   material_id: string | null
   labor_rate_id: string | null
+  /** null = always included; otherwise the add-on this line belongs to */
+  option_id: string | null
   item_code: string
   item_name: string
   item_unit: PriceUnit
@@ -62,6 +72,7 @@ export interface Component {
 }
 
 export interface ProductDetail extends Product {
+  options: ProductOption[]
   components: Component[]
 }
 
@@ -74,6 +85,8 @@ export interface PricingSettings {
   business_address: string
   business_contact: string
   quote_terms: string
+  rounding_step: string
+  owner_name: string
   updated_at: string
 }
 
@@ -87,6 +100,8 @@ export interface PriceLine {
   unit_price: string
   quantity: string
   cost: string
+  /** Add-on name; '' = always included */
+  option: string
 }
 
 export interface PricePreview {
@@ -103,11 +118,17 @@ export interface PricePreview {
   vat_percent: string
   vat: string
   total: string
+  rounding_step: string
+  /** rounded_total - total */
+  rounding: string
+  rounded_total: string
   currency: string
   warnings: string[]
 }
 
 export interface AdminQuotationSummary extends QuotationSummary {
+  /** Quoted by staff for a client without an account */
+  walk_in: boolean
   customer_name: string
   customer_email: string
   customer_city: string
@@ -115,7 +136,9 @@ export interface AdminQuotationSummary extends QuotationSummary {
 }
 
 export interface AdminQuotation extends Quotation {
+  walk_in: boolean
   customer: {
+    /** Empty for walk-in clients who gave none */
     email: string
     full_name: string
     contact_number: string
@@ -123,8 +146,20 @@ export interface AdminQuotation extends Quotation {
     city: string
     province: string
   }
+  created_by_email: string | null
   reviewed_by_email: string | null
+  /** The total was changed by hand on approval */
+  total_adjusted: boolean
   breakdown: PricePreview
+}
+
+export interface WalkInClient {
+  full_name: string
+  contact_number: string
+  email: string | null
+  address_line: string
+  city: string
+  province: string
 }
 
 export interface AuditEntry {
@@ -252,6 +287,14 @@ export const adminApi = {
       method: 'DELETE',
     }),
 
+  addOption: (productId: string, b: Body) =>
+    api<ProductDetail>(`/admin/products/${productId}/options`, json('POST', b)),
+  updateOption: (productId: string, optionId: string, b: Body) =>
+    api<ProductDetail>(`/admin/products/${productId}/options/${optionId}`, json('PATCH', b)),
+  /** Also removes the add-on's lines. */
+  removeOption: (productId: string, optionId: string) =>
+    api<ProductDetail>(`/admin/products/${productId}/options/${optionId}`, { method: 'DELETE' }),
+
   pricePreview: (productId: string, b: Body) =>
     api<PricePreview>(`/admin/products/${productId}/price-preview`, json('POST', b)),
 
@@ -261,8 +304,11 @@ export const adminApi = {
   quotations: (status?: QuotationStatus) =>
     api<AdminQuotationSummary[]>(`/admin/quotations${status ? `?status=${status}` : ''}`),
   quotation: (id: string) => api<AdminQuotation>(`/admin/quotations/${id}`),
-  approveQuotation: (id: string, note: string) =>
-    api<AdminQuotation>(`/admin/quotations/${id}/approve`, json('POST', { note })),
+  createQuotation: (b: QuotationRequest & { client: WalkInClient }) =>
+    api<AdminQuotation>('/admin/quotations', json('POST', { ...b })),
+  /** `finalTotal` replaces the quoted amount; omit to keep it. */
+  approveQuotation: (id: string, note: string, finalTotal?: string) =>
+    api<AdminQuotation>(`/admin/quotations/${id}/approve`, json('POST', { note, final_total: finalTotal })),
   rejectQuotation: (id: string, note: string) =>
     api<AdminQuotation>(`/admin/quotations/${id}/reject`, json('POST', { note })),
   quotationPdfUrl: (id: string) => `/api/v1/admin/quotations/${id}/pdf`,

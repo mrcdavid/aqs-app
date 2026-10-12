@@ -6,6 +6,13 @@ import { api } from './client'
 export type QuotationStatus = 'pending' | 'approved' | 'rejected' | 'cancelled'
 export type LengthUnit = 'cm' | 'in'
 
+/** An add-on that can be ticked when quoting a product. */
+export interface CatalogOption {
+  id: string
+  name: string
+  description: string
+}
+
 export interface CatalogProduct {
   id: string
   code: string
@@ -16,6 +23,7 @@ export interface CatalogProduct {
   max_width_mm: number
   min_height_mm: number
   max_height_mm: number
+  options: CatalogOption[]
 }
 
 export interface QuotationSummary {
@@ -31,6 +39,7 @@ export interface QuotationSummary {
   created_at: string
 }
 
+/** What the customer sees: one amount (VAT included, never itemised) and the 50/50 split. */
 export interface Quotation {
   id: string
   number: string | null
@@ -38,17 +47,19 @@ export interface Quotation {
   product_name: string
   product_description: string
   includes: string[]
+  /** Chosen add-ons, e.g. ["Open back aluminum"] */
+  options: string[]
   input_width: string
   input_height: string
   input_unit: LengthUnit
   width_mm: number
   height_mm: number
   quantity: number
-  unit_price: string
-  amount: string
-  vat_percent: string
-  vat: string
   total: string
+  /** 50% before work starts */
+  downpayment: string
+  /** 50% on completion and installation */
+  balance: string
   currency: string
   created_at: string
   reviewed_at: string | null
@@ -63,6 +74,7 @@ export interface QuotationRequest {
   height: string
   unit: LengthUnit
   quantity: number
+  option_ids: string[]
 }
 
 export const quotationsApi = {
