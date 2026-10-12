@@ -10,10 +10,11 @@ from fastapi.responses import Response
 from sqlalchemy import func, select
 
 from app.core.config import get_settings
-from app.core.deps import DB, CustomerUser
+from app.core.deps import DB, CurrentUser, CustomerUser
 from app.core.rate_limit import limiter
 from app.models import Product, Profile, Quotation, QuotationStatus, User
 from app.schemas.quotation import (
+    CatalogOptionOut,
     CatalogProductOut,
     QuotationIn,
     QuotationOut,
@@ -25,7 +26,9 @@ from app.services.pricing import to_mm
 from app.services.quotation_views import customer_view, pdf_response, summary
 from app.services.quotations import (
     NOT_AVAILABLE,
+    available_options,
     build_snapshot,
+    customer_details,
     price_product,
     quotable_products_query,
 )
@@ -46,9 +49,15 @@ async def _own_quotation(
 
 
 @router.get("/catalog/products")
-async def list_catalog(user: CustomerUser, db: DB) -> list[CatalogProductOut]:
+async def list_catalog(user: CurrentUser, db: DB) -> list[CatalogProductOut]:
+    """Quotable products with their available add-ons, for customers and for staff."""
+    products = list(await db.scalars(quotable_products_query()))
+    options = await available_options(db, [p.id for p in products])
     return [
-        CatalogProductOut.model_validate(p) for p in await db.scalars(quotable_products_query())
+        CatalogProductOut.model_validate(p).model_copy(
+            update={"options": [CatalogOptionOut.model_validate(o) for o in options[p.id]]}
+        )
+        for p in products
     ]
 
 
@@ -79,12 +88,19 @@ async def create_quotation(
     width_mm, height_mm = to_mm(body.width, body.unit), to_mm(body.height, body.unit)
     check_dimensions(product, width_mm, height_mm)
     settings = await get_pricing_settings(db)
-    breakdown = await price_product(
-        db, product, settings, width_mm=width_mm, height_mm=height_mm, quantity=body.quantity
+    breakdown, options = await price_product(
+        db,
+        product,
+        settings,
+        width_mm=width_mm,
+        height_mm=height_mm,
+        quantity=body.quantity,
+        option_ids=body.option_ids,
     )
 
     quotation = Quotation(
         user_id=user.id,
+        created_by=user.id,
         product_id=product.id,
         status=QuotationStatus.PENDING,
         input_width=body.width,
@@ -93,18 +109,18 @@ async def create_quotation(
         width_mm=width_mm,
         height_mm=height_mm,
         quantity=body.quantity,
-        total=breakdown.total,
+        total=breakdown.rounded_total,
         currency=breakdown.currency,
         customer_city=profile.city,
         customer_province=profile.province,
         snapshot=build_snapshot(
-            user=user,
-            profile=profile,
+            customer=customer_details(user, profile),
             product=product,
             width=body.width,
             height=body.height,
             unit=body.unit,
             breakdown=breakdown,
+            options=options,
         ),
     )
     db.add(quotation)
@@ -116,7 +132,11 @@ async def create_quotation(
         actor_id=user.id,
         entity="quotation",
         entity_id=quotation.id,
-        details={"product": product.code, "total": str(breakdown.total)},
+        details={
+            "product": product.code,
+            "options": [o.name for o in options],
+            "total": str(breakdown.rounded_total),
+        },
     )
     await db.commit()
     await db.refresh(quotation)

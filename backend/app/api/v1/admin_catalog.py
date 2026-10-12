@@ -1,6 +1,6 @@
 """Admin catalogue: materials, labour rates, products + templates, pricing settings.
 
-Staff only (admin, super_admin). Nothing here is hard-deleted except template lines;
+Staff only (admin, super_admin). Nothing here is hard-deleted except template lines and add-ons;
 materials, labour rates and products are archived with is_active=false.
 Every change is audited with before/after values.
 """
@@ -9,10 +9,10 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.deps import DB, StaffUser
-from app.models import LaborRate, Material, Product, ProductComponent
+from app.models import LaborRate, Material, Product, ProductComponent, ProductOption
 from app.schemas.catalog import (
     ComponentIn,
     ComponentOut,
@@ -23,6 +23,9 @@ from app.schemas.catalog import (
     MaterialIn,
     MaterialOut,
     MaterialUpdate,
+    OptionIn,
+    OptionOut,
+    OptionUpdate,
     PricePreviewIn,
     PricePreviewOut,
     PricingSettingsIn,
@@ -37,9 +40,11 @@ from app.services.catalog import (
     check_dimensions,
     ensure_basis_matches,
     ensure_code_free,
+    get_option,
     get_or_404,
     get_pricing_settings,
     load_components,
+    load_options,
     to_component_input,
 )
 from app.services.pricing import compute_price, to_mm
@@ -67,7 +72,9 @@ COMPONENT_FIELDS = [
     "waste_percent",
     "label",
     "sort_order",
+    "option_id",
 ]
+OPTION_FIELDS = ["name", "description", "sort_order"]
 SETTINGS_FIELDS = [
     "markup_percent",
     "vat_percent",
@@ -77,6 +84,8 @@ SETTINGS_FIELDS = [
     "business_address",
     "business_contact",
     "quote_terms",
+    "rounding_step",
+    "owner_name",
 ]
 
 
@@ -292,6 +301,7 @@ async def _product_detail(db: DB, product: Product) -> ProductDetailOut:
                 kind="material" if is_material else "labor",
                 material_id=component.material_id,
                 labor_rate_id=component.labor_rate_id,
+                option_id=component.option_id,
                 item_code=item.code,
                 item_name=item.name,
                 item_unit=item.unit,
@@ -305,7 +315,8 @@ async def _product_detail(db: DB, product: Product) -> ProductDetailOut:
             )
         )
     base = ProductOut.model_validate(product).model_dump()
-    return ProductDetailOut(**base, components=components)
+    options = [OptionOut.model_validate(o) for o in await load_options(db, product.id)]
+    return ProductDetailOut(**base, options=options, components=components)
 
 
 @router.get("/products")
@@ -392,6 +403,8 @@ async def add_component(
     if not item.is_active:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"{item.code} is archived")
     ensure_basis_matches(body.basis, item.unit)
+    if body.option_id is not None:
+        await get_option(db, product.id, body.option_id)
 
     component = ProductComponent(product_id=product.id, **body.model_dump())
     db.add(component)
@@ -434,6 +447,10 @@ async def update_component(
     product = await get_or_404(db, Product, product_id, "Product")
     component = await _get_component(db, product_id, component_id)
     values = _patch_values(body)
+    if "option_id" in body.model_fields_set:
+        if body.option_id is not None:
+            await get_option(db, product_id, body.option_id)
+        values["option_id"] = body.option_id
     if "basis" in values:
         item = (
             await db.get(Material, component.material_id)
@@ -492,25 +509,136 @@ async def price_preview(
     width_mm, height_mm = to_mm(body.width, body.unit), to_mm(body.height, body.unit)
     check_dimensions(product, width_mm, height_mm)
     components = await load_components(db, product.id)
-    if not components:
+    if not any(c.option_id is None for c, _ in components):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT, "Add at least one component to this product"
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "Add at least one always-included line to this product",
         )
+    options = {o.id: o.name for o in await load_options(db, product.id)}
+    if any(option_id not in options for option_id in body.option_ids):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unknown add-on")
+    chosen = {option_id: options[option_id] for option_id in body.option_ids}
+    used = [(c, item) for c, item in components if c.option_id is None or c.option_id in chosen]
 
     settings = await get_pricing_settings(db)
     breakdown = compute_price(
-        [to_component_input(c, item) for c, item in components],
+        [
+            to_component_input(c, item, chosen[c.option_id] if c.option_id else "")
+            for c, item in used
+        ],
         width_mm=width_mm,
         height_mm=height_mm,
         quantity=body.quantity,
         markup_percent=settings.markup_percent,
         vat_percent=settings.vat_percent,
         currency=settings.currency,
+        rounding_step=settings.rounding_step,
     )
-    warnings = [f"{item.code} is archived" for _, item in components if not item.is_active]
+    warnings = [f"{item.code} is archived" for _, item in used if not item.is_active]
     if not product.is_active:
         warnings.insert(0, "This product is archived; customers can't select it")
     return PricePreviewOut(**breakdown.as_dict(), warnings=warnings)
+
+
+# ---------- add-ons ----------
+
+
+async def _ensure_option_name_free(
+    db: DB, product_id: uuid.UUID, name: str, *, ignore: uuid.UUID | None = None
+) -> None:
+    stmt = select(ProductOption.id).where(
+        ProductOption.product_id == product_id, func.lower(ProductOption.name) == name.lower()
+    )
+    if ignore is not None:
+        stmt = stmt.where(ProductOption.id != ignore)
+    if await db.scalar(stmt):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"This product already has an add-on called {name}"
+        )
+
+
+@router.post("/products/{product_id}/options", status_code=status.HTTP_201_CREATED)
+async def add_option(
+    product_id: uuid.UUID, body: OptionIn, user: StaffUser, db: DB, request: Request
+) -> ProductDetailOut:
+    product = await get_or_404(db, Product, product_id, "Product")
+    await _ensure_option_name_free(db, product.id, body.name)
+    option = ProductOption(product_id=product.id, **body.model_dump())
+    db.add(option)
+    await db.flush()
+    audit.record(
+        db,
+        "product.option_added",
+        request=request,
+        actor_id=user.id,
+        entity="product",
+        entity_id=product.id,
+        details={"option_id": str(option.id), "after": audit.snapshot(option, OPTION_FIELDS)},
+    )
+    await db.commit()
+    return await _product_detail(db, product)
+
+
+@router.patch("/products/{product_id}/options/{option_id}")
+async def update_option(
+    product_id: uuid.UUID,
+    option_id: uuid.UUID,
+    body: OptionUpdate,
+    user: StaffUser,
+    db: DB,
+    request: Request,
+) -> ProductDetailOut:
+    product = await get_or_404(db, Product, product_id, "Product")
+    option = await get_option(db, product_id, option_id)
+    values = _patch_values(body)
+    if "name" in values:
+        await _ensure_option_name_free(db, product.id, values["name"], ignore=option.id)
+    before = audit.snapshot(option, OPTION_FIELDS)
+    for field, value in values.items():
+        setattr(option, field, value)
+    after = audit.snapshot(option, OPTION_FIELDS)
+    if diff := audit.changes(before, after):
+        audit.record(
+            db,
+            "product.option_updated",
+            request=request,
+            actor_id=user.id,
+            entity="product",
+            entity_id=product.id,
+            details={"option_id": str(option.id), "changes": diff},
+        )
+    await db.commit()
+    return await _product_detail(db, product)
+
+
+@router.delete("/products/{product_id}/options/{option_id}")
+async def remove_option(
+    product_id: uuid.UUID, option_id: uuid.UUID, user: StaffUser, db: DB, request: Request
+) -> ProductDetailOut:
+    """Delete an add-on and its lines. Existing quotations keep their own copy of the prices."""
+    product = await get_or_404(db, Product, product_id, "Product")
+    option = await get_option(db, product_id, option_id)
+    lines = await db.scalar(
+        select(func.count())
+        .select_from(ProductComponent)
+        .where(ProductComponent.option_id == option.id)
+    )
+    audit.record(
+        db,
+        "product.option_removed",
+        request=request,
+        actor_id=user.id,
+        entity="product",
+        entity_id=product.id,
+        details={
+            "option_id": str(option.id),
+            "before": audit.snapshot(option, OPTION_FIELDS),
+            "lines_removed": lines or 0,
+        },
+    )
+    await db.delete(option)  # its lines go with it (ON DELETE CASCADE)
+    await db.commit()
+    return await _product_detail(db, product)
 
 
 # ---------- pricing settings ----------
