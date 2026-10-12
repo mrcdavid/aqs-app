@@ -7,6 +7,7 @@ import {
   FileDown,
   FileText,
   MessageSquare,
+  PackagePlus,
   Ruler,
   XCircle,
   type LucideIcon,
@@ -109,6 +110,12 @@ export function QuotationDetailPage() {
             <h2 className="text-lg font-semibold">{q.product_name}</h2>
             {q.product_description && <p className="text-sm text-muted">{q.product_description}</p>}
             <p className="mt-2 text-sm text-muted">Includes: {q.includes.join(', ')}</p>
+            {q.options.length > 0 && (
+              <p className="mt-1 flex items-center gap-1.5 text-sm font-medium">
+                <PackagePlus className="size-4 shrink-0 text-brand" aria-hidden />
+                With: {q.options.join(', ')}
+              </p>
+            )}
           </div>
 
           <dl className="grid gap-4 text-sm sm:grid-cols-3">
@@ -141,23 +148,17 @@ export function QuotationDetailPage() {
           </dl>
 
           <dl className="space-y-2 border-t border-line pt-4 text-sm tabular-nums">
-            <div className="flex justify-between gap-4">
-              <dt className="text-muted">Unit price × {q.quantity}</dt>
-              <dd>
-                {money(q.unit_price)} × {q.quantity}
-              </dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-muted">Subtotal</dt>
-              <dd>{money(q.amount)}</dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-muted">VAT {trimDecimal(q.vat_percent)}%</dt>
-              <dd>{money(q.vat)}</dd>
-            </div>
-            <div className="bg-brand-gradient mt-3 flex items-center justify-between gap-4 rounded-xl px-4 py-3 text-white">
-              <dt className="font-medium">Total</dt>
+            <div className="bg-brand-gradient flex items-center justify-between gap-4 rounded-xl px-4 py-3 text-white">
+              <dt className="font-medium">{q.status === 'approved' ? 'Total amount' : 'Estimated amount'}</dt>
               <dd className="text-xl font-semibold">{money(q.total)}</dd>
+            </div>
+            <div className="flex justify-between gap-4 pt-2">
+              <dt className="text-muted">50% downpayment</dt>
+              <dd>{money(q.downpayment)}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">50% upon completion and installation</dt>
+              <dd>{money(q.balance)}</dd>
             </div>
           </dl>
         </div>
