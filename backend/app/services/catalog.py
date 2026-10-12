@@ -14,6 +14,7 @@ from app.models import (
     PricingSettings,
     Product,
     ProductComponent,
+    ProductOption,
 )
 from app.models.catalog import BASIS_UNIT
 from app.services.pricing import ComponentInput
@@ -75,7 +76,30 @@ async def load_components(
     return result
 
 
-def to_component_input(component: ProductComponent, item: Material | LaborRate) -> ComponentInput:
+async def load_options(db: AsyncSession, product_id: uuid.UUID) -> list[ProductOption]:
+    """A product's add-ons, in display order."""
+    return list(
+        await db.scalars(
+            select(ProductOption)
+            .where(ProductOption.product_id == product_id)
+            .order_by(ProductOption.sort_order, ProductOption.name)
+        )
+    )
+
+
+async def get_option(
+    db: AsyncSession, product_id: uuid.UUID, option_id: uuid.UUID
+) -> ProductOption:
+    """The add-on, only if it belongs to this product (otherwise 404)."""
+    option = await db.get(ProductOption, option_id)
+    if option is None or option.product_id != product_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Add-on not found")
+    return option
+
+
+def to_component_input(
+    component: ProductComponent, item: Material | LaborRate, option_name: str = ""
+) -> ComponentInput:
     is_material = isinstance(item, Material)
     return ComponentInput(
         kind="material" if is_material else "labor",
@@ -87,6 +111,7 @@ def to_component_input(component: ProductComponent, item: Material | LaborRate) 
         unit_price=item.unit_price if isinstance(item, Material) else item.rate,
         factor=component.factor,
         waste_percent=component.waste_percent,
+        option=option_name,
     )
 
 

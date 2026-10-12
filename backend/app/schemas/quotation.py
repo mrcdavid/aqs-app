@@ -3,16 +3,30 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.models import ProductCategory, QuotationStatus
-from app.schemas.catalog import PricePreviewOut
+from app.schemas.catalog import OptionIds, PricePreviewOut
 
 Size = Annotated[Decimal, Field(gt=0, le=10_000, max_digits=8, decimal_places=2)]
+Money = Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=2)]
+
+# Walk-in clients may give a landline too: digits, spaces, dashes, brackets, optional leading +.
+PHONE_PATTERN = r"^\+?[0-9(][0-9 ()-]{5,18}[0-9]$"
+
+
+class CatalogOptionOut(BaseModel):
+    """An add-on that can be ticked when quoting this product."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    description: str
 
 
 class CatalogProductOut(BaseModel):
-    """What customers see in the product picker."""
+    """What customers (and staff quoting walk-ins) see in the product picker."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -25,6 +39,7 @@ class CatalogProductOut(BaseModel):
     max_width_mm: int
     min_height_mm: int
     max_height_mm: int
+    options: list[CatalogOptionOut] = []
 
 
 class QuotationIn(BaseModel):
@@ -35,12 +50,34 @@ class QuotationIn(BaseModel):
     height: Size
     unit: Literal["cm", "in"]
     quantity: int = Field(default=1, ge=1, le=100)
+    option_ids: OptionIds = []
+
+
+class ClientIn(BaseModel):
+    """A walk-in client's details, typed in by staff (like a customer profile, minus age)."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    full_name: str = Field(min_length=2, max_length=120)
+    contact_number: str = Field(pattern=PHONE_PATTERN, max_length=20)
+    email: EmailStr | None = None
+    address_line: str = Field(min_length=5, max_length=200)
+    city: str = Field(min_length=2, max_length=80)
+    province: str = Field(min_length=2, max_length=80)
+
+
+class StaffQuotationIn(QuotationIn):
+    """Staff quoting for a walk-in client: the same request plus the client's details."""
+
+    client: ClientIn
 
 
 class ReviewIn(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     note: str = Field(default="", max_length=1000)
+    # Approve only: replaces the quoted amount (e.g. 21,423 -> 21,500 by hand). None keeps it.
+    final_total: Money | None = None
 
 
 class RejectIn(BaseModel):
@@ -63,6 +100,7 @@ class QuotationSummaryOut(BaseModel):
 
 
 class AdminQuotationSummaryOut(QuotationSummaryOut):
+    walk_in: bool
     customer_name: str
     customer_email: str
     customer_city: str
@@ -70,7 +108,8 @@ class AdminQuotationSummaryOut(QuotationSummaryOut):
 
 
 class QuotationOut(BaseModel):
-    """Customer view: prices the customer pays, never internal costs or markup."""
+    """Customer view: one amount (VAT included) and the payment split. Never costs, markup,
+    VAT or unit prices: what isn't sent can't be read in the browser either."""
 
     id: uuid.UUID
     number: str | None
@@ -78,17 +117,16 @@ class QuotationOut(BaseModel):
     product_name: str
     product_description: str
     includes: list[str]
+    options: list[str]  # chosen add-ons, e.g. ["Open back aluminum"]
     input_width: Decimal
     input_height: Decimal
     input_unit: str
     width_mm: int
     height_mm: int
     quantity: int
-    unit_price: Decimal
-    amount: Decimal
-    vat_percent: Decimal
-    vat: Decimal
     total: Decimal
+    downpayment: Decimal  # 50% before work starts
+    balance: Decimal  # 50% on completion and installation
     currency: str
     created_at: datetime
     reviewed_at: datetime | None
@@ -98,6 +136,9 @@ class QuotationOut(BaseModel):
 
 
 class AdminQuotationOut(QuotationOut):
+    walk_in: bool
     customer: dict[str, Any]
+    created_by_email: str | None
     reviewed_by_email: str | None
-    breakdown: PricePreviewOut  # full internal breakdown, including markup
+    total_adjusted: bool  # total differs from the calculated (rounded) price
+    breakdown: PricePreviewOut  # full internal breakdown, including markup and VAT

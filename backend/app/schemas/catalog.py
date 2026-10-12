@@ -5,7 +5,14 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    model_validator,
+)
 
 from app.models import Basis, MaterialCategory, PriceUnit, ProductCategory
 
@@ -20,6 +27,16 @@ Price = Annotated[Decimal, Field(ge=0, max_digits=12, decimal_places=2)]
 Percent = Annotated[Decimal, Field(ge=0, le=100, max_digits=5, decimal_places=2)]
 Factor = Annotated[Decimal, Field(gt=0, le=1000, max_digits=10, decimal_places=4)]
 Millimetres = Annotated[int, Field(ge=1, le=20_000)]
+
+
+def _unique_ids(ids: list[uuid.UUID]) -> list[uuid.UUID]:
+    if len(set(ids)) != len(ids):
+        raise ValueError("each add-on can be chosen once")
+    return ids
+
+
+# Chosen add-ons of the product (max 10, no repeats).
+OptionIds = Annotated[list[uuid.UUID], Field(max_length=10), AfterValidator(_unique_ids)]
 
 
 class _In(BaseModel):
@@ -135,9 +152,32 @@ class ProductOut(_Out):
     updated_at: datetime
 
 
+# ---------- add-ons (optional parts of a product template) ----------
+
+
+class OptionIn(_In):
+    name: str = Field(min_length=2, max_length=80)
+    description: str = Field(default="", max_length=300)
+    sort_order: int = Field(default=0, ge=0, le=1000)
+
+
+class OptionUpdate(_In):
+    name: str | None = Field(default=None, min_length=2, max_length=80)
+    description: str | None = Field(default=None, max_length=300)
+    sort_order: int | None = Field(default=None, ge=0, le=1000)
+
+
+class OptionOut(_Out):
+    id: uuid.UUID
+    name: str
+    description: str
+    sort_order: int
+
+
 class ComponentIn(_In):
     material_id: uuid.UUID | None = None
     labor_rate_id: uuid.UUID | None = None
+    option_id: uuid.UUID | None = None  # None = always included
     basis: Basis
     factor: Factor
     waste_percent: Percent = Decimal(0)
@@ -152,6 +192,8 @@ class ComponentIn(_In):
 
 
 class ComponentUpdate(_In):
+    # Sent as null: move the line to "always included". Left out: unchanged.
+    option_id: uuid.UUID | None = None
     basis: Basis | None = None
     factor: Factor | None = None
     waste_percent: Percent | None = None
@@ -164,6 +206,7 @@ class ComponentOut(BaseModel):
     kind: Literal["material", "labor"]
     material_id: uuid.UUID | None
     labor_rate_id: uuid.UUID | None
+    option_id: uuid.UUID | None
     item_code: str
     item_name: str
     item_unit: PriceUnit
@@ -177,6 +220,7 @@ class ComponentOut(BaseModel):
 
 
 class ProductDetailOut(ProductOut):
+    options: list[OptionOut]
     components: list[ComponentOut]
 
 
@@ -194,6 +238,9 @@ class PricingSettingsIn(_In):
     business_address: str = Field(max_length=300)
     business_contact: str = Field(max_length=120)
     quote_terms: str = Field(max_length=4000)
+    # Totals round up to a multiple of this (100: 21,423 -> 21,500); 0 turns rounding off.
+    rounding_step: Annotated[Decimal, Field(ge=0, le=100_000, max_digits=8, decimal_places=2)]
+    owner_name: str = Field(max_length=120)  # printed under the owner's signature line
 
 
 class PricingSettingsOut(_Out):
@@ -205,6 +252,8 @@ class PricingSettingsOut(_Out):
     business_address: str
     business_contact: str
     quote_terms: str
+    rounding_step: Decimal
+    owner_name: str
     updated_at: datetime
 
 
@@ -213,6 +262,7 @@ class PricePreviewIn(_In):
     height: Annotated[Decimal, Field(gt=0, le=10_000, max_digits=8, decimal_places=2)]
     unit: Literal["cm", "in"]
     quantity: int = Field(default=1, ge=1, le=100)
+    option_ids: OptionIds = []
 
 
 class PriceLineOut(BaseModel):
@@ -225,6 +275,7 @@ class PriceLineOut(BaseModel):
     unit_price: Decimal
     quantity: Decimal
     cost: Decimal
+    option: str = ""  # add-on name; "" = always included (and in snapshots before add-ons)
 
 
 class PricePreviewOut(BaseModel):
@@ -241,5 +292,8 @@ class PricePreviewOut(BaseModel):
     vat_percent: Decimal
     vat: Decimal
     total: Decimal
+    rounding_step: Decimal
+    rounding: Decimal
+    rounded_total: Decimal
     currency: str
     warnings: list[str]

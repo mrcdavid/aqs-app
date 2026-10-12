@@ -1,7 +1,8 @@
 """Quotation PDFs with ReportLab. Built only from the quotation snapshot, never from live prices.
 
-Customer-facing: shows unit price (markup included), VAT and total; never the internal material
-costs or markup. All user-provided text is escaped before it reaches ReportLab's markup parser.
+Customer-facing: shows one amount (VAT included but never itemised), the 50/50 payment terms and
+signature lines; never unit prices, internal costs, markup or VAT. All user-provided text is
+escaped before it reaches ReportLab's markup parser.
 """
 
 from dataclasses import dataclass
@@ -17,11 +18,19 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfgen.canvas import Canvas
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import (
+    KeepTogether,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
-from app.services.quotations import PHT
+from app.services.quotations import DOWNPAYMENT_PERCENT, PHT, payment_split
 
 BRAND = colors.HexColor("#1f5fa8")
+BRAND_SOFT = colors.HexColor("#eef3fb")
 MUTED = colors.HexColor("#666666")
 UNITS = {"cm": "cm", "in": "in"}
 
@@ -33,6 +42,7 @@ class PdfInput:
     reference: str  # quote number, or DRAFT-xxxxxxxx
     created_at: datetime
     valid_until: date | None
+    total: Decimal  # what the customer pays (VAT included)
     draft: bool
     note: str | None = None
 
@@ -62,6 +72,10 @@ def _styles() -> dict[str, ParagraphStyle]:
             alignment=TA_RIGHT,
         ),
         "right": ParagraphStyle("right", parent=body, alignment=TA_RIGHT),
+        "sign": ParagraphStyle("sign", parent=body, fontName="Helvetica-Bold"),
+        "with": ParagraphStyle(
+            "with", parent=body, fontName="Helvetica-Bold", fontSize=8.5, leading=11
+        ),
         "heading": ParagraphStyle(
             "heading",
             parent=body,
@@ -115,6 +129,38 @@ def _footer(canvas: Canvas, doc: Any) -> None:
     canvas.restoreState()
 
 
+def _signatures(owner: str, client: str, s: dict[str, ParagraphStyle]) -> KeepTogether:
+    """Owner on the left, client (conforme) on the right, with room to sign above each line."""
+    rows = [
+        [Paragraph("Prepared by:", s["small"]), "", Paragraph("Conforme:", s["small"])],
+        ["", "", ""],
+        [_p(owner, s["sign"]), "", _p(client, s["sign"])],
+        [
+            Paragraph("Owner", s["small"]),
+            "",
+            Paragraph("Client - signature over printed name", s["small"]),
+        ],
+        ["", "", Paragraph("Date: ______________________", s["small"])],
+    ]
+    table = Table(
+        rows,
+        colWidths=[76 * mm, 16 * mm, 76 * mm],
+        rowHeights=[None, 14 * mm, None, None, 8 * mm],
+        hAlign="LEFT",
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("LINEABOVE", (0, 2), (0, 2), 0.8, colors.black),
+                ("LINEABOVE", (2, 2), (2, 2), 0.8, colors.black),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+            ]
+        )
+    )
+    return KeepTogether([table])
+
+
 def render_quotation_pdf(data: PdfInput) -> bytes:
     s = _styles()
     snap = data.snapshot
@@ -156,46 +202,40 @@ def render_quotation_pdf(data: PdfInput) -> bytes:
     )
     story += [header, Spacer(1, 8 * mm)]
 
-    # Customer
+    # Customer (walk-in clients may have no email)
     story.append(Paragraph("Prepared for", s["heading"]))
+    contact = "  |  ".join(v for v in (customer["contact_number"], customer["email"]) if v)
     for line in (
         customer["full_name"],
         customer["address_line"],
         f"{customer['city']}, {customer['province']}",
-        f"{customer['contact_number']}  |  {customer['email']}",
+        contact,
     ):
         story.append(_p(line, s["body"]))
     story.append(Spacer(1, 6 * mm))
 
-    # Item
-    includes = ", ".join(line["label"] or line["name"] for line in pricing["lines"])
+    # Item: what is being made, no prices per line.
+    includes = ", ".join(
+        line["label"] or line["name"] for line in pricing["lines"] if not line.get("option")
+    )
     description = [_p(product["name"], s["body"])]
     if product.get("description"):
         description.append(_p(product["description"], s["small"]))
     description.append(_p(f"Includes: {includes}", s["small"]))
+    if options := [o["name"] for o in snap.get("options", [])]:
+        description.append(_p(f"With: {', '.join(options)}", s["with"]))
     size = (
         f"{_num(inp['width'])} x {_num(inp['height'])} {unit}\n"
         f"({pricing['width_mm']} x {pricing['height_mm']} mm)"
     )
-    rows = [
-        ["Description", "Size", "Qty", "Unit price", "Amount"],
-        [
-            description,
-            _p(size, s["body"]),
-            str(pricing["quantity"]),
-            _money(pricing["unit_price"], currency),
-            _money(pricing["net"], currency),
-        ],
-    ]
-    vat_label = f"VAT {_num(pricing['vat_percent'])}%"
-    totals = [
-        ["", "", "", "Subtotal", _money(pricing["net"], currency)],
-        ["", "", "", vat_label, _money(pricing["vat"], currency)],
-        ["", "", "", "Total", _money(pricing["total"], currency)],
-    ]
     # Widths sum to 168 mm: fits the 174 mm text area minus ReportLab's 6 pt frame padding.
     table = Table(
-        rows + totals, colWidths=[62 * mm, 34 * mm, 11 * mm, 29 * mm, 32 * mm], hAlign="LEFT"
+        [
+            ["Description", "Size", "Qty"],
+            [description, _p(size, s["body"]), str(pricing["quantity"])],
+        ],
+        colWidths=[104 * mm, 44 * mm, 20 * mm],
+        hAlign="LEFT",
     )
     table.setStyle(
         TableStyle(
@@ -205,16 +245,66 @@ def render_quotation_pdf(data: PdfInput) -> bytes:
                 ("BACKGROUND", (0, 0), (-1, 0), BRAND),
                 ("FONT", (0, 1), (-1, -1), "Helvetica", 9.5),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+                ("ALIGN", (2, 0), (2, -1), "RIGHT"),
                 ("LINEBELOW", (0, 1), (-1, 1), 0.5, colors.lightgrey),
-                ("FONT", (3, -1), (-1, -1), "Helvetica-Bold", 11),
-                ("LINEABOVE", (3, -1), (-1, -1), 1, colors.black),
                 ("TOPPADDING", (0, 0), (-1, -1), 5),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
             ]
         )
     )
-    story += [table, Spacer(1, 8 * mm)]
+
+    # One amount: VAT is included but not shown.
+    amount = Table(
+        [["Estimated amount" if data.draft else "Total amount", _money(data.total, currency)]],
+        colWidths=[118 * mm, 50 * mm],
+        hAlign="LEFT",
+    )
+    amount.setStyle(
+        TableStyle(
+            [
+                ("FONT", (0, 0), (-1, -1), "Helvetica-Bold", 12),
+                ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+                ("BACKGROUND", (0, 0), (-1, -1), BRAND_SOFT),
+                ("LINEABOVE", (0, 0), (-1, 0), 1, BRAND),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ]
+        )
+    )
+
+    downpayment, balance = payment_split(data.total)
+    down_pct = _num(str(DOWNPAYMENT_PERCENT))
+    rest_pct = _num(str(100 - DOWNPAYMENT_PERCENT))
+    payments = Table(
+        [
+            [f"{down_pct}% downpayment", _money(downpayment, currency)],
+            [f"{rest_pct}% upon completion and installation", _money(balance, currency)],
+        ],
+        colWidths=[118 * mm, 50 * mm],
+        hAlign="LEFT",
+    )
+    payments.setStyle(
+        TableStyle(
+            [
+                ("FONT", (0, 0), (-1, -1), "Helvetica", 9.5),
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("LINEBELOW", (0, 0), (-1, -2), 0.5, colors.lightgrey),
+                ("LEFTPADDING", (0, 0), (0, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+
+    story += [
+        table,
+        Spacer(1, 3 * mm),
+        amount,
+        Spacer(1, 6 * mm),
+        Paragraph("Payment terms", s["heading"]),
+        payments,
+        Spacer(1, 6 * mm),
+    ]
 
     if data.note:
         story += [Paragraph("Note", s["heading"]), _p(data.note, s["body"]), Spacer(1, 4 * mm)]
@@ -223,6 +313,10 @@ def render_quotation_pdf(data: PdfInput) -> bytes:
             Paragraph("Terms and conditions", s["heading"]),
             _p(data.business["terms"], s["small"]),
         ]
+    story += [
+        Spacer(1, 12 * mm),
+        _signatures(data.business.get("owner_name") or "", customer["full_name"], s),
+    ]
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(
