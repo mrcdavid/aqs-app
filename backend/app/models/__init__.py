@@ -11,6 +11,7 @@ from app.models.catalog import (
     Product,
     ProductCategory,
     ProductComponent,
+    ProductOption,
 )
 from app.models.quotation import Quotation, QuotationStatus, QuoteCounter
 from app.models.session import AuthSession
@@ -29,6 +30,7 @@ __all__ = [
     "Product",
     "ProductCategory",
     "ProductComponent",
+    "ProductOption",
     "Profile",
     "Quotation",
     "QuotationStatus",

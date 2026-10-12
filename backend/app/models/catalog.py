@@ -7,13 +7,26 @@ one labour rate, multiplied by a measurement of the opening:
     cost     = quantity * unit_price
 
 Basis values: area (m²), perimeter / width / height (m), fixed (1 per product unit).
+
+Lines without an option are always included. Lines that belong to a ProductOption (an optional
+add-on such as an open back aluminum frame) are only priced when that add-on is chosen.
 """
 
 import uuid
 from decimal import Decimal
 from enum import StrEnum
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, Numeric, String, Text, true
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    true,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, Timestamps, UUIDPk, str_enum
@@ -104,6 +117,20 @@ class Product(UUIDPk, Timestamps, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=true(), default=True)
 
 
+class ProductOption(UUIDPk, Timestamps, Base):
+    """An optional add-on of a product (e.g. "Open back aluminum"), made of template lines."""
+
+    __tablename__ = "product_options"
+    __table_args__ = (UniqueConstraint("product_id", "name"),)
+
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(80))
+    description: Mapped[str] = mapped_column(String(300), server_default="", default="")
+    sort_order: Mapped[int] = mapped_column(Integer, server_default="0", default=0)
+
+
 class ProductComponent(UUIDPk, Timestamps, Base):
     """One line of a product template: a material OR a labour rate, never both."""
 
@@ -128,6 +155,11 @@ class ProductComponent(UUIDPk, Timestamps, Base):
     waste_percent: Mapped[Decimal] = mapped_column(Percent, server_default="0", default=Decimal(0))
     label: Mapped[str] = mapped_column(String(120), server_default="", default="")
     sort_order: Mapped[int] = mapped_column(Integer, server_default="0", default=0)
+    # None = always included; else only priced when this add-on is chosen. Deleting the add-on
+    # deletes its lines (quotations keep their own copy in the snapshot).
+    option_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("product_options.id", ondelete="CASCADE"), index=True
+    )
 
 
 class PricingSettings(Timestamps, Base):
@@ -139,6 +171,9 @@ class PricingSettings(Timestamps, Base):
         CheckConstraint("markup_percent >= 0 AND markup_percent <= 500", name="markup_range"),
         CheckConstraint("vat_percent >= 0 AND vat_percent <= 100", name="vat_range"),
         CheckConstraint("quote_validity_days BETWEEN 1 AND 365", name="validity_range"),
+        CheckConstraint(
+            "rounding_step >= 0 AND rounding_step <= 100000", name="rounding_step_range"
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
@@ -152,3 +187,7 @@ class PricingSettings(Timestamps, Base):
     business_address: Mapped[str] = mapped_column(String(300), server_default="")
     business_contact: Mapped[str] = mapped_column(String(120), server_default="")
     quote_terms: Mapped[str] = mapped_column(Text, server_default="")
+
+    # Totals are rounded up to a multiple of this (0 = off); owner signs the PDF (migration 0004)
+    rounding_step: Mapped[Decimal] = mapped_column(Numeric(12, 2), server_default="100")
+    owner_name: Mapped[str] = mapped_column(String(120), server_default="")

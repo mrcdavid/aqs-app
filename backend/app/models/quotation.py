@@ -1,4 +1,4 @@
-"""Customer quotation requests.
+"""Quotation requests: made by customers, or by staff for walk-in clients.
 
 Prices are frozen in `snapshot` when the customer clicks Process, so later catalogue changes never
 alter an existing quotation. Columns used by the dashboard (total, city, province, status,
@@ -55,7 +55,10 @@ class Quotation(UUIDPk, Timestamps, Base):
 
     # Assigned on approval: AQS-2026-000123
     number: Mapped[str | None] = mapped_column(String(20), unique=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    # The customer's account; None for a walk-in client quoted by staff (details in snapshot).
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), index=True)
+    # Who made the request: the customer, or the staff member who quoted a walk-in client.
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"), index=True)
     status: Mapped[QuotationStatus] = mapped_column(str_enum(QuotationStatus, "status"), index=True)
 
@@ -67,6 +70,7 @@ class Quotation(UUIDPk, Timestamps, Base):
     height_mm: Mapped[int] = mapped_column(Integer)
     quantity: Mapped[int] = mapped_column(Integer)
 
+    # What the customer pays (VAT included): the rounded-up total, or the amount set on approval.
     total: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     currency: Mapped[str] = mapped_column(String(3))
     customer_city: Mapped[str] = mapped_column(String(80))
