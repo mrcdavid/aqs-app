@@ -1,4 +1,4 @@
-# CLAUDE.md — AQS APP (Automatic Quotation System)
+v# CLAUDE.md — AQS APP (Automatic Quotation System)
 
 Read this file fully at the start of every session. Source of intent: `plan.md.txt`
 (currently on the Desktop, outside this folder — move it into `AQS-APP/` to keep it in git).
