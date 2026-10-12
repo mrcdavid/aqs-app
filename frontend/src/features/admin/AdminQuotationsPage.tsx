@@ -1,7 +1,8 @@
-import { Ban, CheckCircle2, ChevronRight, Clock, FileText, Inbox, Layers, MapPin, XCircle } from 'lucide-react'
+import { Ban, CheckCircle2, ChevronRight, Clock, FilePlus2, FileText, Inbox, Layers, MapPin, Store, XCircle } from 'lucide-react'
 import { Link, useLoaderData } from 'react-router'
 
-import { QuotationStatusBadge } from '../../components/ui/Badge'
+import { Badge, QuotationStatusBadge } from '../../components/ui/Badge'
+import { ButtonLink } from '../../components/ui/Button'
 import { Card, EmptyState, PageHeader } from '../../components/ui/Card'
 import { formatDate, formatMoney } from '../../lib/format'
 import type { adminQuotationsLoader } from './loaders'
@@ -19,7 +20,16 @@ export function AdminQuotationsPage() {
 
   return (
     <>
-      <PageHeader title="Quotations" description="Review customer requests and issue official quotations." icon={FileText} />
+      <PageHeader
+        title="Quotations"
+        description="Review customer requests, quote walk-in clients, and issue official quotations."
+        icon={FileText}
+        actions={
+          <ButtonLink to="/admin/quotations/new" icon={FilePlus2} className="flex-1 sm:flex-none">
+            New quotation
+          </ButtonLink>
+        }
+      />
 
       <nav aria-label="Filter by status" className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none]">
         {TABS.map(({ status: s, label, icon: Icon }) => (
@@ -44,7 +54,7 @@ export function AdminQuotationsPage() {
           <EmptyState
             icon={Inbox}
             title={status === 'pending' ? 'Nothing waiting for review' : 'No quotations here'}
-            text={status === 'pending' ? 'New customer requests will appear here.' : undefined}
+            text={status === 'pending' ? 'New customer requests and walk-in quotations will appear here.' : undefined}
           />
         ) : (
           <ul className="divide-y divide-line">
@@ -60,6 +70,11 @@ export function AdminQuotationsPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span className="font-medium">{q.customer_name}</span>
+                      {q.walk_in && (
+                        <Badge tone="brand" icon={Store}>
+                          Walk-in
+                        </Badge>
+                      )}
                       {q.number && <span className="font-mono text-xs text-muted">{q.number}</span>}
                     </div>
                     <p className="truncate text-sm text-muted">

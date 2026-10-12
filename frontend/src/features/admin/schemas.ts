@@ -73,8 +73,17 @@ export const componentSchema = z.object({
     .refine((v) => Number(v) > 0, 'Must be more than 0'),
   waste_percent: percent,
   label: z.string().trim().max(120),
+  /** '' = always included, else the add-on's id */
+  option_id: z.string(),
 })
 export type ComponentForm = z.input<typeof componentSchema>
+
+/** An optional add-on of a product. Mirrors OptionIn in backend/app/schemas/catalog.py. */
+export const optionSchema = z.object({
+  name: z.string().trim().min(2, 'At least 2 characters').max(80),
+  description: z.string().trim().max(300),
+})
+export type OptionForm = z.input<typeof optionSchema>
 
 export const previewSchema = z.object({
   width: z.string().trim().regex(/^\d{1,5}(\.\d{1,2})?$/, 'Enter a size'),
@@ -101,5 +110,38 @@ export const settingsSchema = z.object({
   business_address: z.string().trim().max(300),
   business_contact: z.string().trim().max(120),
   quote_terms: z.string().trim().max(4000),
+  rounding_step: z
+    .string()
+    .trim()
+    .regex(/^\d{1,6}(\.\d{1,2})?$/, 'Amount like 100, or 0 for no rounding')
+    .refine((v) => Number(v) <= 100000, 'At most 100,000'),
+  owner_name: z.string().trim().max(120),
 })
 export type SettingsForm = z.input<typeof settingsSchema>
+
+/** A walk-in client typed in by staff. Mirrors ClientIn in backend/app/schemas/quotation.py. */
+export const walkInClientSchema = z.object({
+  full_name: z.string().trim().min(2, "Enter the client's full name").max(120),
+  contact_number: z
+    .string()
+    .trim()
+    .regex(/^\+?[0-9(][0-9 ()-]{5,18}[0-9]$/, 'Mobile or landline, e.g. 0917 123 4567'),
+  email: z
+    .string()
+    .trim()
+    .max(254)
+    .refine((v) => v === '' || z.email().safeParse(v).success, 'Enter a valid email, or leave it blank'),
+  address_line: z.string().trim().min(5, 'Enter the street address').max(200),
+  city: z.string().trim().min(2, 'Enter the city or municipality').max(80),
+  province: z.string().trim().min(2, 'Enter the province').max(80),
+})
+export type WalkInClientForm = z.input<typeof walkInClientSchema>
+
+export const EMPTY_WALK_IN_CLIENT: WalkInClientForm = {
+  full_name: '',
+  contact_number: '',
+  email: '',
+  address_line: '',
+  city: '',
+  province: '',
+}

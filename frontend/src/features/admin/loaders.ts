@@ -1,7 +1,7 @@
 import { redirect, type LoaderFunctionArgs } from 'react-router'
 
 import { adminApi, type UserKind } from '../../api/admin'
-import type { QuotationStatus } from '../../api/quotations'
+import { quotationsApi, type QuotationStatus } from '../../api/quotations'
 import { requireRole } from '../../lib/guards'
 
 // Every admin loader re-checks the role; the backend enforces it again on each call.
@@ -44,6 +44,11 @@ export async function adminQuotationsLoader({ request }: LoaderFunctionArgs) {
   const param = new URL(request.url).searchParams.get('status') ?? 'pending'
   const status = STATUSES.find((s) => s === param)
   return { status: status ?? 'all', quotations: await adminApi.quotations(status) }
+}
+
+export async function adminNewQuotationLoader() {
+  await staff()
+  return { products: await quotationsApi.catalog() }
 }
 
 export async function adminQuotationDetailLoader({ params }: LoaderFunctionArgs) {

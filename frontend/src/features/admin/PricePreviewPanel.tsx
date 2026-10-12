@@ -1,9 +1,10 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { AlertTriangle, Calculator } from 'lucide-react'
+import { AlertTriangle, Calculator, PackagePlus } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 
 import { adminApi, type PricePreview, type ProductDetail } from '../../api/admin'
+import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Card, ErrorBanner } from '../../components/ui/Card'
 import { Field, inputClass } from '../../components/ui/Field'
@@ -14,6 +15,8 @@ import { previewSchema, type PreviewForm } from './schemas'
 export function PricePreviewPanel({ product }: { product: ProductDetail }) {
   const [result, setResult] = useState<PricePreview | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [optionIds, setOptionIds] = useState<string[]>([])
+  const toggle = (id: string) => setOptionIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]))
   const { register, handleSubmit, formState } = useForm<PreviewForm>({
     resolver: zodResolver(previewSchema),
     defaultValues: { width: '120', height: '100', unit: 'cm', quantity: 1 },
@@ -23,7 +26,9 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
   async function onSubmit(values: PreviewForm) {
     setError(null)
     try {
-      setResult(await adminApi.pricePreview(product.id, previewSchema.parse(values)))
+      // Drop add-ons deleted since they were ticked.
+      const option_ids = optionIds.filter((id) => product.options.some((o) => o.id === id))
+      setResult(await adminApi.pricePreview(product.id, { ...previewSchema.parse(values), option_ids }))
     } catch (err) {
       setResult(null)
       setError(messageOf(err))
@@ -64,6 +69,18 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
           Calculate
         </Button>
       </form>
+      {product.options.length > 0 && (
+        <fieldset className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+          <legend className="sr-only">Add-ons to include</legend>
+          <span className="text-muted">Include add-ons:</span>
+          {product.options.map((o) => (
+            <label key={o.id} className="inline-flex cursor-pointer items-center gap-2">
+              <input type="checkbox" className="size-4 accent-brand" checked={optionIds.includes(o.id)} onChange={() => toggle(o.id)} />
+              {o.name}
+            </label>
+          ))}
+        </fieldset>
+      )}
 
       <div className="mt-5 space-y-3">
         <ErrorBanner message={error} />
@@ -91,7 +108,14 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
                 <tbody>
                   {result.lines.map((l, i) => (
                     <tr key={i} className="border-t border-line">
-                      <td className="px-3 py-2">{l.label || l.name}</td>
+                      <td className="px-3 py-2">
+                        {l.label || l.name}{' '}
+                        {l.option && (
+                          <Badge tone="brand" icon={PackagePlus}>
+                            {l.option}
+                          </Badge>
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-muted">{BASIS_LABEL[l.basis]}</td>
                       <td className="px-3 py-2 text-right">{trimDecimal(l.quantity)}</td>
                       <td className="px-3 py-2 text-right whitespace-nowrap">
@@ -109,6 +133,8 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
                 [`Customer unit price (+${trimDecimal(result.markup_percent)}% markup)`, result.unit_price],
                 [`Subtotal (× ${result.quantity})`, result.net],
                 [`VAT ${trimDecimal(result.vat_percent)}%`, result.vat],
+                ['Total incl. VAT', result.total],
+                [`Rounded up to the next ${trimDecimal(result.rounding_step)}`, result.rounding],
               ].map(([label, value]) => (
                 <div key={label} className="flex justify-between gap-4">
                   <dt className="text-muted">{label}</dt>
@@ -116,8 +142,8 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
                 </div>
               ))}
               <div className="bg-brand-gradient mt-2 flex justify-between gap-4 rounded-xl px-4 py-3 text-base font-semibold text-white">
-                <dt>Total</dt>
-                <dd>{money(result.total)}</dd>
+                <dt>Customer pays</dt>
+                <dd>{money(result.rounded_total)}</dd>
               </div>
             </dl>
           </div>

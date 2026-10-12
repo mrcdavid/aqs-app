@@ -22,6 +22,8 @@ function toForm(s: PricingSettings): SettingsForm {
     business_address: s.business_address,
     business_contact: s.business_contact,
     quote_terms: s.quote_terms,
+    rounding_step: s.rounding_step,
+    owner_name: s.owner_name,
   }
 }
 
@@ -79,6 +81,14 @@ export function PricingSettingsPage() {
                   {...register('quote_validity_days', { valueAsNumber: true })}
                 />
               </Field>
+              <Field
+                label="Round totals up to the next"
+                htmlFor="rounding"
+                hint="e.g. 100 turns 21,423 into 21,500 · 0 = no rounding"
+                error={errors.rounding_step?.message}
+              >
+                <input id="rounding" inputMode="decimal" className={`${inputClass} tabular-nums`} {...register('rounding_step')} />
+              </Field>
             </div>
           </Card>
           <Card title="Business details on PDFs" icon={Building2}>
@@ -91,6 +101,9 @@ export function PricingSettingsPage() {
               </Field>
               <Field label="Contact" htmlFor="b-contact" hint="e.g. 0917 123 4567 · sales@example.com" error={errors.business_contact?.message}>
                 <input id="b-contact" className={inputClass} {...register('business_contact')} />
+              </Field>
+              <Field label="Owner name" htmlFor="b-owner" hint="Printed under the owner's signature line" error={errors.owner_name?.message}>
+                <input id="b-owner" className={inputClass} {...register('owner_name')} />
               </Field>
               <Field label="Terms and conditions" htmlFor="b-terms" error={errors.quote_terms?.message}>
                 <textarea id="b-terms" rows={5} className={inputClass} {...register('quote_terms')} />

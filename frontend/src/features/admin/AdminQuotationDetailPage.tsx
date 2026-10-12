@@ -7,7 +7,9 @@ import {
   MapPin,
   MessageSquare,
   Package,
+  PackagePlus,
   Phone,
+  Store,
   UserRound,
   X,
   XCircle,
@@ -16,7 +18,7 @@ import { useState } from 'react'
 import { useLoaderData, useRevalidator } from 'react-router'
 
 import { adminApi } from '../../api/admin'
-import { QuotationStatusBadge } from '../../components/ui/Badge'
+import { Badge, QuotationStatusBadge } from '../../components/ui/Badge'
 import { Button, ButtonAnchor } from '../../components/ui/Button'
 import { Card, ErrorBanner, PageHeader } from '../../components/ui/Card'
 import { Field, inputClass } from '../../components/ui/Field'
@@ -35,6 +37,7 @@ export function AdminQuotationDetailPage() {
   const money = (v: string) => formatMoney(v, q.currency)
   const b = q.breakdown
   const hasPdf = q.status === 'pending' || q.status === 'approved'
+  const who = q.walk_in ? 'client' : 'customer'
 
   return (
     <>
@@ -45,7 +48,7 @@ export function AdminQuotationDetailPage() {
         icon={FileText}
         description={
           <>
-            Requested {formatDate(q.created_at)}
+            {q.walk_in ? `Created ${formatDate(q.created_at)} by ${q.created_by_email}` : `Requested ${formatDate(q.created_at)}`}
             {q.reviewed_at && ` · reviewed ${formatDate(q.reviewed_at)} by ${q.reviewed_by_email}`}
             {q.valid_until && ` · valid until ${formatDate(q.valid_until)}`}
           </>
@@ -81,15 +84,22 @@ export function AdminQuotationDetailPage() {
       </PageHeader>
 
       {q.review_note && (
-        <Card title="Note to customer" icon={MessageSquare}>
+        <Card title={`Note to ${who}`} icon={MessageSquare}>
           <p className="whitespace-pre-line text-sm">{q.review_note}</p>
         </Card>
       )}
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card title="Customer" icon={UserRound}>
+        <Card title={q.walk_in ? 'Client' : 'Customer'} icon={UserRound}>
           <ul className="space-y-2 text-sm">
-            <li className="font-medium">{q.customer.full_name}</li>
+            <li className="flex flex-wrap items-center gap-2 font-medium">
+              {q.customer.full_name}
+              {q.walk_in && (
+                <Badge tone="brand" icon={Store}>
+                  Walk-in · no account
+                </Badge>
+              )}
+            </li>
             <li className="flex items-start gap-2 text-muted">
               <MapPin className="mt-0.5 size-4 shrink-0" aria-hidden />
               <span className="text-ink">
@@ -102,17 +112,25 @@ export function AdminQuotationDetailPage() {
                 {q.customer.contact_number}
               </a>
             </li>
-            <li className="flex items-center gap-2 text-muted">
-              <Mail className="size-4 shrink-0" aria-hidden />
-              <a href={`mailto:${q.customer.email}`} className="truncate text-brand hover:underline">
-                {q.customer.email}
-              </a>
-            </li>
+            {q.customer.email && (
+              <li className="flex items-center gap-2 text-muted">
+                <Mail className="size-4 shrink-0" aria-hidden />
+                <a href={`mailto:${q.customer.email}`} className="truncate text-brand hover:underline">
+                  {q.customer.email}
+                </a>
+              </li>
+            )}
           </ul>
         </Card>
         <Card title="Request" icon={Package}>
           <ul className="space-y-2 text-sm">
             <li className="font-medium">{q.product_name}</li>
+            {q.options.length > 0 && (
+              <li className="flex items-center gap-1.5">
+                <PackagePlus className="size-4 shrink-0 text-brand" aria-hidden />
+                With: {q.options.join(', ')}
+              </li>
+            )}
             <li>
               {trimDecimal(q.input_width)} × {trimDecimal(q.input_height)} {q.input_unit}{' '}
               <span className="text-muted">
@@ -122,15 +140,29 @@ export function AdminQuotationDetailPage() {
             <li>Quantity {q.quantity}</li>
           </ul>
           <div className="bg-brand-gradient mt-4 flex items-center justify-between rounded-xl px-4 py-3 text-white">
-            <span className="text-sm">Total incl. VAT</span>
+            <span className="text-sm">
+              Quoted amount
+              {q.total_adjusted && <span className="block text-xs text-white/80">Adjusted from {money(b.rounded_total)}</span>}
+            </span>
             <span className="text-lg font-semibold tabular-nums">{money(q.total)}</span>
           </div>
+          <dl className="mt-3 space-y-1.5 text-sm tabular-nums">
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">50% downpayment</dt>
+              <dd>{money(q.downpayment)}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">50% upon completion and installation</dt>
+              <dd>{money(q.balance)}</dd>
+            </div>
+          </dl>
         </Card>
       </div>
 
       <Card title="Internal cost breakdown" icon={Calculator}>
         <p className="mb-3 text-sm text-muted">
-          Prices frozen when the customer clicked Process. The customer only sees the unit price, VAT and total.
+          Prices frozen when the quotation was processed. The {who} only sees the quoted amount (VAT included, not shown)
+          and the 50/50 payment split.
         </p>
         <div className="overflow-x-auto rounded-xl border border-line">
           <table className="w-full text-left text-sm tabular-nums">
@@ -147,7 +179,12 @@ export function AdminQuotationDetailPage() {
               {b.lines.map((l, i) => (
                 <tr key={i} className="border-t border-line">
                   <td className="px-3 py-2">
-                    {l.label || l.name} <span className="font-mono text-xs text-muted">{l.code}</span>
+                    {l.label || l.name} <span className="font-mono text-xs text-muted">{l.code}</span>{' '}
+                    {l.option && (
+                      <Badge tone="brand" icon={PackagePlus}>
+                        {l.option}
+                      </Badge>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-muted">{BASIS_LABEL[l.basis]}</td>
                   <td className="px-3 py-2 text-right">{trimDecimal(l.quantity)}</td>
@@ -168,6 +205,8 @@ export function AdminQuotationDetailPage() {
             ['Markup', b.markup],
             [`Subtotal (unit price × ${b.quantity})`, b.net],
             [`VAT ${trimDecimal(b.vat_percent)}%`, b.vat],
+            ['Total incl. VAT', b.total],
+            [`Rounded up to the next ${trimDecimal(b.rounding_step)}`, b.rounding],
           ].map(([label, value]) => (
             <div key={label} className="flex justify-between gap-4">
               <dt className="text-muted">{label}</dt>
@@ -175,24 +214,36 @@ export function AdminQuotationDetailPage() {
             </div>
           ))}
           <div className="flex justify-between gap-4 border-t border-line pt-2 text-base font-semibold">
-            <dt>Total</dt>
-            <dd>{money(b.total)}</dd>
+            <dt>Calculated price</dt>
+            <dd>{money(b.rounded_total)}</dd>
           </div>
+          {q.total_adjusted && (
+            <div className="flex justify-between gap-4 text-base font-semibold text-brand">
+              <dt>Adjusted on approval</dt>
+              <dd>{money(q.total)}</dd>
+            </div>
+          )}
         </dl>
       </Card>
 
       <ReviewModal
         review={review}
-        total={money(q.total)}
+        total={q.total}
+        calculated={money(b.rounded_total)}
         customer={q.customer.full_name}
+        walkIn={q.walk_in}
         onClose={() => setReview(null)}
-        onSubmit={async (action, note) => {
+        onSubmit={async (action, note, amount) => {
           if (action === 'approve') {
-            const approved = await adminApi.approveQuotation(q.id, note)
-            toast.success(`Approved as ${approved.number}. The customer can now print the official PDF.`)
+            const approved = await adminApi.approveQuotation(q.id, note, amount === q.total ? undefined : amount)
+            toast.success(
+              q.walk_in
+                ? `Approved as ${approved.number}. Open the official PDF to print it for the client.`
+                : `Approved as ${approved.number}. The customer can now print the official PDF.`,
+            )
           } else {
             await adminApi.rejectQuotation(q.id, note)
-            toast.success('Request rejected. The customer will see your note.')
+            toast.success(q.walk_in ? 'Request rejected.' : 'Request rejected. The customer will see your note.')
           }
           setReview(null)
           revalidate()
@@ -202,26 +253,37 @@ export function AdminQuotationDetailPage() {
   )
 }
 
+const AMOUNT = /^\d{1,10}(\.\d{1,2})?$/
+
 function ReviewModal({
   review,
   total,
+  calculated,
   customer,
+  walkIn,
   onClose,
   onSubmit,
 }: {
   review: Review | null
+  /** Current quoted amount, a decimal string like "21500.00" */
   total: string
+  /** Formatted calculated (rounded-up) price, for the hint */
+  calculated: string
   customer: string
+  walkIn: boolean
   onClose: () => void
-  onSubmit: (action: Review, note: string) => Promise<void>
+  onSubmit: (action: Review, note: string, amount: string) => Promise<void>
 }) {
   const [note, setNote] = useState('')
+  const [amount, setAmount] = useState(total)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const approving = review === 'approve'
+  const who = walkIn ? 'client' : 'customer'
 
   function close() {
     setNote('')
+    setAmount(total)
     setError(null)
     onClose()
   }
@@ -229,13 +291,18 @@ function ReviewModal({
   async function submit() {
     if (!review) return
     if (!approving && note.trim().length < 3) {
-      setError('Please write a short note so the customer knows why.')
+      setError(`Please write a short note so the ${who} knows why.`)
+      return
+    }
+    const finalAmount = amount.trim().replace(/,/g, '')
+    if (approving && (!AMOUNT.test(finalAmount) || Number(finalAmount) <= 0)) {
+      setError('Enter the final amount, like 21500 or 21500.50.')
       return
     }
     setBusy(true)
     setError(null)
     try {
-      await onSubmit(review, note.trim())
+      await onSubmit(review, note.trim(), finalAmount)
       setNote('')
     } catch (err) {
       setError(messageOf(err))
@@ -253,8 +320,10 @@ function ReviewModal({
       title={approving ? 'Approve and issue quotation' : 'Reject this request'}
       description={
         approving
-          ? `${customer} will get an official quotation for ${total} with a quote number.`
-          : `${customer} will see the request as rejected, with your note.`
+          ? `${customer} will get an official quotation with a quote number for the amount below.`
+          : walkIn
+            ? 'The request will be marked as rejected, with your note.'
+            : `${customer} will see the request as rejected, with your note.`
       }
       footer={
         <>
@@ -269,14 +338,29 @@ function ReviewModal({
     >
       <div className="space-y-3">
         <ErrorBanner message={error} />
+        {approving && (
+          <Field
+            label="Final amount"
+            htmlFor="review-amount"
+            hint={`Calculated price: ${calculated}. Change it to adjust the amount printed on the quotation.`}
+          >
+            <input
+              id="review-amount"
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className={`${inputClass} text-lg font-semibold tabular-nums`}
+            />
+          </Field>
+        )}
         <Field
-          label={approving ? 'Note to customer (optional)' : 'Reason (required)'}
+          label={approving ? `Note to ${who} (optional)` : 'Reason (required)'}
           htmlFor="review-note"
           hint={approving ? 'Printed on the official PDF.' : 'e.g. “Size too large, please call us.”'}
         >
           <textarea
             id="review-note"
-            autoFocus
+            autoFocus={!approving}
             rows={4}
             maxLength={1000}
             value={note}
