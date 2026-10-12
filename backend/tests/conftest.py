@@ -53,7 +53,8 @@ TABLES = (
 )
 # pricing_settings keeps its single row; it is reset to the migration defaults instead.
 RESET_SETTINGS = (
-    "UPDATE pricing_settings SET markup_percent = 0, vat_percent = 12, currency = 'PHP'"
+    "UPDATE pricing_settings SET markup_percent = 0, vat_percent = 12, currency = 'PHP',"
+    " rounding_step = 100, owner_name = 'Cleo David'"
 )
 
 
@@ -89,6 +90,7 @@ def migrated_db() -> None:
 
 @pytest.fixture
 async def db(migrated_db: None) -> AsyncIterator[AsyncSession]:
+    limiter.reset()  # every test starts with fresh rate limits (staff logins are 5/min)
     async with SessionLocal() as session:
         # TRUNCATE doesn't fire the audit_log row trigger, so the table can be reset.
         await session.execute(text(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE"))
@@ -99,7 +101,6 @@ async def db(migrated_db: None) -> AsyncIterator[AsyncSession]:
 
 @pytest.fixture
 async def client(db: AsyncSession) -> AsyncIterator[AsyncClient]:
-    limiter.reset()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as c:
         await c.get("/api/v1/health")  # receive the CSRF cookie

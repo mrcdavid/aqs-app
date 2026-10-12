@@ -5,7 +5,14 @@ from decimal import Decimal as D
 import pytest
 
 from app.models import Basis, PriceUnit
-from app.services.pricing import ComponentInput, basis_value, compute_price, money, to_mm
+from app.services.pricing import (
+    ComponentInput,
+    basis_value,
+    compute_price,
+    money,
+    round_up,
+    to_mm,
+)
 
 
 def line(basis: Basis, unit: PriceUnit, price: str, factor: str = "1", waste: str = "0"):
@@ -56,6 +63,7 @@ def test_worked_example() -> None:
     assert b.net == D("10693.92")
     assert b.vat == D("1283.27")  # 1283.2704 rounded
     assert b.total == D("11977.19")
+    assert b.rounding_step == D(0) and b.rounded_total == b.total  # rounding is off by default
 
 
 def test_basis_values() -> None:
@@ -74,6 +82,37 @@ def test_unit_conversion(value: str, unit: str, mm: int) -> None:
     assert to_mm(D(value), unit) == mm  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    ("amount", "step", "expected"),
+    [
+        ("21423", "100", "21500.00"),  # the owner's example
+        ("21500.00", "100", "21500.00"),  # already a multiple: unchanged
+        ("21500.01", "100", "21600.00"),  # one centavo over still rounds up
+        ("21523", "500", "22000.00"),
+        ("21423", "1000", "22000.00"),
+        ("11977.19", "1", "11978.00"),
+        ("11977.19", "0", "11977.19"),  # 0 = rounding off
+    ],
+)
+def test_round_up(amount: str, step: str, expected: str) -> None:
+    assert round_up(D(amount), D(step)) == D(expected)
+
+
+def test_rounded_total_is_never_below_total() -> None:
+    b = compute_price(
+        SLIDING_WINDOW,
+        width_mm=1200,
+        height_mm=1000,
+        quantity=2,
+        markup_percent=D("20"),
+        vat_percent=D("12"),
+        currency="PHP",
+        rounding_step=D("100"),
+    )
+    assert b.total == D("11977.19")  # the exact price is kept for the admin breakdown
+    assert (b.rounding, b.rounded_total) == (D("22.81"), D("12000.00"))
+
+
 def test_money_rounds_half_up() -> None:
     assert money(D("2.345")) == D("2.35")
     assert money(D("2.344")) == D("2.34")
@@ -85,3 +124,27 @@ def test_rejects_empty_template_and_bad_sizes() -> None:
         compute_price([], width_mm=1000, height_mm=1000, quantity=1, **kwargs)
     with pytest.raises(ValueError, match="positive"):
         compute_price(SLIDING_WINDOW, width_mm=0, height_mm=1000, quantity=1, **kwargs)
+
+
+def test_add_on_lines_are_priced_and_tagged() -> None:
+    open_back = ComponentInput(
+        kind="material",
+        code="AL-OPENBACK",
+        name="Open back aluminum",
+        label="",
+        basis=Basis.PERIMETER,
+        unit=PriceUnit.LM,
+        unit_price=D("300"),
+        factor=D("1"),
+        waste_percent=D("0"),
+        option="Open back aluminum",
+    )
+    kwargs = {"markup_percent": D(0), "vat_percent": D(0), "currency": "PHP"}
+    base = compute_price(SLIDING_WINDOW, width_mm=1200, height_mm=1000, quantity=1, **kwargs)
+    extra = compute_price(
+        [*SLIDING_WINDOW, open_back], width_mm=1200, height_mm=1000, quantity=1, **kwargs
+    )
+    assert all(line.option == "" for line in base.lines)
+    assert extra.lines[-1].option == "Open back aluminum"
+    assert extra.lines[-1].cost == D("1320.00")  # 4.4 m around the window x 300
+    assert extra.total == base.total + D("1320.00")  # grows with the size, like any line

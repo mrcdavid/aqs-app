@@ -1,5 +1,6 @@
 """Admin catalogue API against the real test database."""
 
+import uuid
 from typing import Any
 
 import pytest
@@ -18,6 +19,8 @@ BUSINESS = {
     "business_address": "1 Test St.",
     "business_contact": "0917 000 0000",
     "quote_terms": "Valid for 30 days.",
+    "rounding_step": "100",
+    "owner_name": "Cleo David",
 }
 
 
@@ -77,6 +80,31 @@ async def build_sliding_window(admin: AsyncClient) -> str:
     ]:
         await create(admin, f"products/{pid}/components", body)
     return pid
+
+
+async def add_open_back(admin: AsyncClient, pid: str, suffix: str = "") -> dict[str, Any]:
+    """Optional add-on: open back aluminum at 300/m plus 100/m to fit it, both around the opening.
+
+    For 1200 x 1000 mm that adds 4.4 m x 400 = 1,760.00 to the cost of one window.
+    """
+    ob = await create(admin, "materials", material(f"AL-OPENBACK{suffix}", "lm", "300", "aluminum"))
+    fit = await create(
+        admin,
+        "labor-rates",
+        {"code": f"FIT-OB{suffix}", "name": "Fit open back", "unit": "lm", "rate": "100"},
+    )
+    detail = await create(
+        admin,
+        f"products/{pid}/options",
+        {"name": "Open back aluminum", "description": "Extra frame behind the window"},
+    )
+    option = detail["options"][0]
+    for body in [
+        {"material_id": ob["id"], "basis": "perimeter", "factor": "1"},
+        {"labor_rate_id": fit["id"], "basis": "perimeter", "factor": "1"},
+    ]:
+        await create(admin, f"products/{pid}/components", {**body, "option_id": option["id"]})
+    return option
 
 
 # ---------- access ----------
@@ -222,6 +250,7 @@ async def test_price_preview_matches_worked_example(admin: AsyncClient):
     assert (body["width_mm"], body["height_mm"]) == (1200, 1000)
     assert body["unit_subtotal"] == "4455.80"
     assert body["total"] == "11977.19"
+    assert (body["rounding"], body["rounded_total"]) == ("22.81", "12000.00")
     assert body["warnings"] == []
 
 
@@ -248,6 +277,13 @@ async def test_pricing_settings_bounds(admin: AsyncClient):
         f"{API}/pricing-settings",
         json={"markup_percent": "20", "vat_percent": "150", "currency": "PHP", **BUSINESS},
     )
+    assert r.status_code == 422
+
+
+@pytest.mark.parametrize("step", ["-1", "100001", "0.001"])
+async def test_rounding_step_bounds(admin: AsyncClient, step: str):
+    body = {"markup_percent": "0", "vat_percent": "12", "currency": "PHP", **BUSINESS}
+    r = await admin.put(f"{API}/pricing-settings", json={**body, "rounding_step": step})
     assert r.status_code == 422
 
 
@@ -306,3 +342,93 @@ async def test_delete_unknown_and_forbidden(
         assert (await customer.delete(f"{API}/materials/{m['id']}")).status_code == 403
     finally:
         await customer.aclose()
+
+
+# ---------- add-ons ----------
+
+
+async def test_add_on_lifecycle(admin: AsyncClient, db: AsyncSession):
+    pid = await build_sliding_window(admin)
+    option = await add_open_back(admin, pid)
+    detail = (await admin.get(f"{API}/products/{pid}")).json()
+    assert [o["name"] for o in detail["options"]] == ["Open back aluminum"]
+    in_option = [c for c in detail["components"] if c["option_id"] == option["id"]]
+    assert len(in_option) == 2
+    assert sum(c["option_id"] is None for c in detail["components"]) == 5
+
+    r = await admin.patch(
+        f"{API}/products/{pid}/options/{option['id']}", json={"name": "Open back frame"}
+    )
+    assert r.json()["options"][0]["name"] == "Open back frame"
+
+    line_url = f"{API}/products/{pid}/components/{in_option[0]['id']}"
+
+    def option_of(body: dict[str, Any]) -> str | None:
+        return next(c for c in body["components"] if c["id"] == in_option[0]["id"])["option_id"]
+
+    r = await admin.patch(line_url, json={"option_id": None})  # move to "always included"
+    assert option_of(r.json()) is None
+    r = await admin.patch(line_url, json={"option_id": option["id"]})  # and back
+    assert option_of(r.json()) == option["id"]
+    r = await admin.patch(line_url, json={"factor": "2"})  # leaving option_id out keeps it
+    assert option_of(r.json()) == option["id"]
+
+    r = await admin.delete(f"{API}/products/{pid}/options/{option['id']}")
+    assert r.status_code == 200
+    assert r.json()["options"] == [] and len(r.json()["components"]) == 5  # its lines went too
+
+    actions = set(
+        (
+            await db.scalars(select(AuditLog.action).where(AuditLog.action.like("product.option%")))
+        ).all()
+    )
+    assert actions == {"product.option_added", "product.option_updated", "product.option_removed"}
+
+
+async def test_add_on_names_are_unique_per_product(admin: AsyncClient):
+    pid = await build_sliding_window(admin)
+    await add_open_back(admin, pid)
+    r = await admin.post(f"{API}/products/{pid}/options", json={"name": "open back ALUMINUM"})
+    assert r.status_code == 409
+    r = await admin.post(f"{API}/products/{pid}/options", json={"name": "X"})
+    assert r.status_code == 422
+
+
+async def test_add_on_must_belong_to_the_product(admin: AsyncClient):
+    pid = await build_sliding_window(admin)
+    option = await add_open_back(admin, pid)
+    other = await create(admin, "products", {**WINDOW, "code": "SW-2"})
+    glass = next(m for m in (await admin.get(f"{API}/materials")).json() if m["code"] == "GL-6MM")
+    body = {"material_id": glass["id"], "basis": "area", "factor": "1", "option_id": option["id"]}
+    r = await admin.post(f"{API}/products/{other['id']}/components", json=body)
+    assert r.status_code == 404
+    r = await admin.patch(
+        f"{API}/products/{other['id']}/options/{option['id']}", json={"name": "Nope"}
+    )
+    assert r.status_code == 404
+
+
+async def test_price_preview_with_add_on(admin: AsyncClient):
+    pid = await build_sliding_window(admin)
+    option = await add_open_back(admin, pid)
+    await admin.put(
+        f"{API}/pricing-settings",
+        json={"markup_percent": "20", "vat_percent": "12", "currency": "PHP", **BUSINESS},
+    )
+    size = {"width": "120", "height": "100", "unit": "cm", "quantity": 2}
+    url = f"{API}/products/{pid}/price-preview"
+
+    plain = (await admin.post(url, json=size)).json()
+    assert plain["total"] == "11977.19"  # add-on lines are left out unless chosen
+    assert all(line["option"] == "" for line in plain["lines"])
+
+    body = (await admin.post(url, json={**size, "option_ids": [option["id"]]})).json()
+    assert body["unit_subtotal"] == "6215.80"  # 4,455.80 + 4.4 m x (300 + 100)
+    assert body["total"] == "16708.07" and body["rounded_total"] == "16800.00"
+    assert [line["option"] for line in body["lines"]][-2:] == ["Open back aluminum"] * 2
+
+    assert (
+        await admin.post(url, json={**size, "option_ids": [str(uuid.uuid4())]})
+    ).status_code == 422
+    dup = {**size, "option_ids": [option["id"], option["id"]]}
+    assert (await admin.post(url, json=dup)).status_code == 422
