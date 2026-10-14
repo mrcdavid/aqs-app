@@ -125,6 +125,11 @@ export function AdminQuotationDetailPage() {
         <Card title="Request" icon={Package}>
           <ul className="space-y-2 text-sm">
             <li className="font-medium">{q.product_name}</li>
+            {q.choices.map((c) => (
+              <li key={c.group}>
+                <span className="text-muted">{c.group}:</span> {c.name}
+              </li>
+            ))}
             {q.options.length > 0 && (
               <li className="flex items-center gap-1.5">
                 <PackagePlus className="size-4 shrink-0 text-brand" aria-hidden />
@@ -186,7 +191,14 @@ export function AdminQuotationDetailPage() {
                       </Badge>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-muted">{BASIS_LABEL[l.basis]}</td>
+                  <td className="px-3 py-2 text-muted">
+                    {BASIS_LABEL[l.basis]}
+                    {l.width_mm !== null && (l.width_mm !== b.width_mm || l.height_mm !== b.height_mm) && (
+                      <span className="block text-xs">
+                        at {l.width_mm} × {l.height_mm} mm
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right">{trimDecimal(l.quantity)}</td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">
                     {money(l.unit_price)} <span className="text-muted">{UNIT_LABEL[l.unit]}</span>
@@ -342,6 +354,7 @@ function ReviewModal({
           <Field
             label="Final amount"
             htmlFor="review-amount"
+            required
             hint={`Calculated price: ${calculated}. Change it to adjust the amount printed on the quotation.`}
           >
             <input
@@ -354,8 +367,9 @@ function ReviewModal({
           </Field>
         )}
         <Field
-          label={approving ? `Note to ${who} (optional)` : 'Reason (required)'}
+          label={approving ? `Note to ${who} (optional)` : 'Reason'}
           htmlFor="review-note"
+          required={!approving}
           hint={approving ? 'Printed on the official PDF.' : 'e.g. “Size too large, please call us.”'}
         >
           <textarea
