@@ -92,19 +92,21 @@ export function AdminNewQuotationPage() {
               <Field label="Full name" htmlFor="c-name" error={errors?.full_name?.message}>
                 <input id="c-name" autoComplete="off" className={inputClass} aria-invalid={!!errors?.full_name} {...register('client.full_name')} />
               </Field>
-              <Field label="Contact number" htmlFor="c-phone" hint="Mobile or landline" error={errors?.contact_number?.message}>
+              <Field label="Mobile number" htmlFor="c-phone" hint="Philippine mobile number" error={errors?.contact_number?.message}>
                 <input
                   id="c-phone"
                   type="tel"
+                  inputMode="tel"
+                  maxLength={20}
                   autoComplete="off"
-                  placeholder="e.g. 0917 123 4567"
+                  placeholder="09XX XXX XXXX"
                   className={inputClass}
                   aria-invalid={!!errors?.contact_number}
                   {...register('client.contact_number')}
                 />
               </Field>
               <Field label="Email (optional)" htmlFor="c-email" error={errors?.email?.message}>
-                <input id="c-email" type="email" autoComplete="off" className={inputClass} aria-invalid={!!errors?.email} {...register('client.email')} />
+                <input id="c-email" type="email" inputMode="email" maxLength={254} autoComplete="off" className={inputClass} aria-invalid={!!errors?.email} {...register('client.email')} />
               </Field>
               <Field label="Street address" htmlFor="c-street" hint="House no., street, barangay" error={errors?.address_line?.message}>
                 <input id="c-street" autoComplete="off" className={inputClass} aria-invalid={!!errors?.address_line} {...register('client.address_line')} />
