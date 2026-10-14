@@ -7,10 +7,11 @@ import { useLoaderData, useNavigate } from 'react-router'
 import { quotationsApi } from '../../api/quotations'
 import { Button, ButtonLink } from '../../components/ui/Button'
 import { Card, EmptyState, ErrorBanner, PageHeader } from '../../components/ui/Card'
+import { RequiredNote } from '../../components/ui/Field'
 import { messageOf } from '../../lib/errors'
 import { toast } from '../../stores/feedback'
 import type { newQuotationLoader } from './loader'
-import { chosenOptions, EMPTY_QUOTE_ITEM, quoteItemSchema, sizeErrors, type QuoteItemValues } from './quoteItem'
+import { EMPTY_QUOTE_ITEM, missingChoice, quoteItemSchema, sizeErrors, toRequest, type QuoteItemValues } from './quoteItem'
 import { ProductStep, SizeStep } from './QuoteItemFields'
 
 export function NewQuotationPage() {
@@ -34,9 +35,13 @@ export function NewQuotationPage() {
     if (sizes.width) setFieldError('width', { message: sizes.width })
     if (sizes.height) setFieldError('height', { message: sizes.height })
     if (sizes.width || sizes.height) return
+    const missing = missingChoice(values, product)
+    if (missing) {
+      setError(`Choose an option for ${missing}.`)
+      return
+    }
     try {
-      const item = quoteItemSchema.parse(values)
-      const created = await quotationsApi.create({ ...item, option_ids: chosenOptions(item.option_ids, product) })
+      const created = await quotationsApi.create(toRequest(quoteItemSchema.parse(values), product))
       toast.success('Your estimate is ready.')
       navigate(`/app/quotations/${created.id}`)
     } catch (err) {
@@ -66,6 +71,7 @@ export function NewQuotationPage() {
           backLabel="My quotations"
         />
         <ErrorBanner message={error} />
+        <RequiredNote />
 
         <fieldset disabled={isSubmitting} className="space-y-6">
           <ProductStep n={1} products={products} />

@@ -110,6 +110,11 @@ export function QuotationDetailPage() {
             <h2 className="text-lg font-semibold">{q.product_name}</h2>
             {q.product_description && <p className="text-sm text-muted">{q.product_description}</p>}
             <p className="mt-2 text-sm text-muted">Includes: {q.includes.join(', ')}</p>
+            {q.choices.map((c) => (
+              <p key={c.group} className="mt-1 text-sm">
+                <span className="text-muted">{c.group}:</span> <span className="font-medium">{c.name}</span>
+              </p>
+            ))}
             {q.options.length > 0 && (
               <p className="mt-1 flex items-center gap-1.5 text-sm font-medium">
                 <PackagePlus className="size-4 shrink-0 text-brand" aria-hidden />

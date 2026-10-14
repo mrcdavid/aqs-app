@@ -1,16 +1,28 @@
-// Product picker and size fields shared by the customer's form and the staff walk-in form.
+// Product picker (with its choices and add-ons) and size fields, shared by the customer's form and
+// the staff walk-in form.
 // Both forms wrap these in a react-hook-form <FormProvider> whose values include QuoteItemValues
 // (see quoteItem.ts).
 
-import { AppWindow, CheckCircle2, DoorOpen, Grid3x3, Minus, Package, PackagePlus, Plus, type LucideIcon } from 'lucide-react'
-import type { ReactNode } from 'react'
+import {
+  AppWindow,
+  CheckCircle2,
+  DoorOpen,
+  Grid3x3,
+  ListChecks,
+  Minus,
+  Package,
+  PackagePlus,
+  Plus,
+  type LucideIcon,
+} from 'lucide-react'
+import { useEffect, type ReactNode } from 'react'
 import { useFormContext, useWatch } from 'react-hook-form'
 
 import type { ProductCategory } from '../../api/admin'
 import type { CatalogProduct } from '../../api/quotations'
 import { Button } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
-import { Field, inputClass, segmentClass } from '../../components/ui/Field'
+import { Field, inputClass, RequiredMark, segmentClass } from '../../components/ui/Field'
 import { PRODUCT_CATEGORY_LABEL } from '../../lib/format'
 import { fromMm, type QuoteItemValues } from './quoteItem'
 
@@ -21,12 +33,15 @@ const CATEGORY_ICON: Record<ProductCategory, LucideIcon> = {
   other: Package,
 }
 
-export function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+export function Step({ n, title, required, children }: { n: number; title: string; required?: boolean; children: ReactNode }) {
   return (
     <Card>
       <h2 className="mb-4 flex items-center gap-3 text-base font-semibold">
         <span className="bg-brand-gradient grid size-7 place-items-center rounded-full text-sm text-white">{n}</span>
-        {title}
+        <span>
+          {title}
+          {required && <RequiredMark />}
+        </span>
       </h2>
       {children}
     </Card>
@@ -40,7 +55,7 @@ export function ProductStep({ n, products }: { n: number; products: CatalogProdu
   const product = products.find((p) => p.id === productId)
 
   return (
-    <Step n={n} title="Choose a product">
+    <Step n={n} title="Choose a product" required>
       <div role="radiogroup" aria-label="Product" className="grid gap-3 sm:grid-cols-2">
         {products.map((p) => {
           const Icon = CATEGORY_ICON[p.category]
@@ -68,9 +83,53 @@ export function ProductStep({ n, products }: { n: number; products: CatalogProdu
           {error}
         </p>
       )}
+      {product && product.choice_groups.length > 0 && <Choices product={product} />}
       {product && product.options.length > 0 && <AddOns product={product} />}
     </Step>
   )
+}
+
+const optionCard =
+  'flex cursor-pointer gap-3 rounded-2xl border border-line bg-surface p-4 transition hover:border-line-strong ' +
+  'has-checked:border-transparent has-checked:bg-brand-soft has-checked:ring-2 has-checked:ring-ring has-focus-visible:ring-2 has-focus-visible:ring-ring'
+
+/** One required pick per group (e.g. Glass type). The first choice is pre-selected. */
+function Choices({ product }: { product: CatalogProduct }) {
+  const { register, getValues, setValue } = useFormContext<QuoteItemValues>()
+
+  // Pick the first choice of each group when a product is chosen (keep a valid earlier pick).
+  useEffect(() => {
+    for (const g of product.choice_groups) {
+      if (!g.choices.some((c) => c.id === getValues(`choices.${g.id}`))) {
+        setValue(`choices.${g.id}`, g.choices[0].id)
+      }
+    }
+  }, [product, getValues, setValue])
+
+  return product.choice_groups.map((g) => (
+    <div key={g.id} className="mt-5 border-t border-line pt-4">
+      <fieldset>
+        <legend className="mb-3 flex items-center gap-2 text-sm font-medium">
+          <ListChecks className="size-4 text-brand" aria-hidden />
+          <span>
+            {g.name}
+            <RequiredMark />
+          </span>
+        </legend>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {g.choices.map((c) => (
+            <label key={c.id} className={optionCard}>
+              <input type="radio" value={c.id} className="mt-0.5 size-4 shrink-0 accent-brand" {...register(`choices.${g.id}`)} />
+              <span className="min-w-0">
+                <span className="block font-medium">{c.name}</span>
+                {c.description && <span className="mt-0.5 block text-sm text-muted">{c.description}</span>}
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+    </div>
+  ))
 }
 
 /** Optional extras of the chosen product, e.g. an open back aluminum frame. Unticked by default. */
@@ -90,10 +149,7 @@ function AddOns({ product }: { product: CatalogProduct }) {
         </legend>
         <div className="grid gap-3 sm:grid-cols-2">
           {product.options.map((o) => (
-            <label
-              key={o.id}
-              className="flex cursor-pointer gap-3 rounded-2xl border border-line bg-surface p-4 transition hover:border-line-strong has-checked:border-transparent has-checked:bg-brand-soft has-checked:ring-2 has-checked:ring-ring has-focus-visible:ring-2 has-focus-visible:ring-ring"
-            >
+            <label key={o.id} className={optionCard}>
               <input type="checkbox" className="mt-0.5 size-4 shrink-0 accent-brand" checked={optionIds.includes(o.id)} onChange={() => toggle(o.id)} />
               <span className="min-w-0">
                 <span className="block font-medium">{o.name}</span>
@@ -121,6 +177,7 @@ export function SizeStep({ n, products }: { n: number; products: CatalogProduct[
         <div>
           <p className="mb-1.5 text-sm font-medium" id="unit-label">
             Unit
+            <RequiredMark />
           </p>
           <div role="radiogroup" aria-labelledby="unit-label" className="inline-flex rounded-xl bg-surface-2 p-1">
             {(['cm', 'in'] as const).map((u) => (
@@ -135,6 +192,7 @@ export function SizeStep({ n, products }: { n: number; products: CatalogProduct[
           <Field
             label={`Width (${unit})`}
             htmlFor="width"
+            required
             error={errors.width?.message}
             hint={product ? `Allowed: ${range(product.min_width_mm, product.max_width_mm)}` : 'Choose a product to see the allowed range'}
           >
@@ -143,12 +201,13 @@ export function SizeStep({ n, products }: { n: number; products: CatalogProduct[
           <Field
             label={`Height (${unit})`}
             htmlFor="height"
+            required
             error={errors.height?.message}
             hint={product ? `Allowed: ${range(product.min_height_mm, product.max_height_mm)}` : undefined}
           >
             <input id="height" inputMode="decimal" placeholder="e.g. 100" className={`${inputClass} tabular-nums`} aria-invalid={!!errors.height} {...register('height')} />
           </Field>
-          <Field label="Quantity" htmlFor="quantity" error={errors.quantity?.message}>
+          <Field label="Quantity" htmlFor="quantity" required error={errors.quantity?.message}>
             <div className="flex items-center gap-2">
               <Button variant="secondary" icon={Minus} aria-label="One fewer" className="w-11 shrink-0 px-0" onClick={() => setQty((quantity || 1) - 1)} />
               <input

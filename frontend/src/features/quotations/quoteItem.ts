@@ -1,9 +1,9 @@
-// What is being quoted (product, size, quantity): shared by the customer's form and the staff
-// walk-in form. Mirrors QuotationIn in backend/app/schemas/quotation.py.
+// What is being quoted (product, size, quantity, choices, add-ons): shared by the customer's form
+// and the staff walk-in form. Mirrors QuotationIn in backend/app/schemas/quotation.py.
 
 import { z } from 'zod'
 
-import type { CatalogProduct, LengthUnit } from '../../api/quotations'
+import type { CatalogProduct, LengthUnit, QuotationRequest } from '../../api/quotations'
 
 const MM_PER: Record<LengthUnit, number> = { cm: 10, in: 25.4 }
 
@@ -20,6 +20,8 @@ export const quoteItemSchema = z.object({
   width: size,
   height: size,
   quantity: z.number({ error: 'Enter a quantity' }).int().min(1).max(100),
+  /** Picked choice per group id, e.g. { <glass group id>: <reflective id> } */
+  choices: z.record(z.string(), z.string()),
   /** Ticked add-ons; unticked by default */
   option_ids: z.array(z.string()).max(10),
 })
@@ -31,12 +33,31 @@ export const EMPTY_QUOTE_ITEM: QuoteItemValues = {
   width: '',
   height: '',
   quantity: 1,
+  choices: {},
   option_ids: [],
 }
 
-/** Only send add-ons of the chosen product (ticks may remain from a product picked earlier). */
-export function chosenOptions(optionIds: string[], product: CatalogProduct): string[] {
-  return optionIds.filter((id) => product.options.some((o) => o.id === id))
+/** The group a valid choice is still missing for (the form pre-selects one, so rarely). */
+export function missingChoice(values: QuoteItemValues, product: CatalogProduct): string | null {
+  const group = product.choice_groups.find((g) => !g.choices.some((c) => c.id === values.choices[g.id]))
+  return group ? group.name : null
+}
+
+/**
+ * The request body: one choice per group plus the ticked add-ons, keeping only ids of `product`
+ * (ticks and picks may remain from a product chosen earlier).
+ */
+export function toRequest(values: z.output<typeof quoteItemSchema>, product: CatalogProduct): QuotationRequest {
+  const picked = product.choice_groups.map((g) => values.choices[g.id]).filter((id) => id !== undefined)
+  const addOns = values.option_ids.filter((id) => product.options.some((o) => o.id === id))
+  return {
+    product_id: values.product_id,
+    unit: values.unit,
+    width: values.width,
+    height: values.height,
+    quantity: values.quantity,
+    option_ids: [...picked, ...addOns],
+  }
 }
 
 function rangeError(value: string, unit: LengthUnit, min: number, max: number, what: string) {
