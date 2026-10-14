@@ -88,7 +88,7 @@ async def create_quotation_for_client(
     width_mm, height_mm = to_mm(body.width, body.unit), to_mm(body.height, body.unit)
     check_dimensions(product, width_mm, height_mm)
     settings = await get_pricing_settings(db)
-    breakdown, options = await price_product(
+    breakdown, picked = await price_product(
         db,
         product,
         settings,
@@ -121,7 +121,7 @@ async def create_quotation_for_client(
             height=body.height,
             unit=body.unit,
             breakdown=breakdown,
-            options=options,
+            picked=picked,
         ),
     )
     db.add(quotation)
@@ -135,7 +135,7 @@ async def create_quotation_for_client(
         entity_id=quotation.id,
         details={
             "product": product.code,
-            "options": [o.name for o in options],
+            "options": [o.name for o in picked.options],
             "total": str(breakdown.rounded_total),
             "walk_in_client": client.full_name,
         },

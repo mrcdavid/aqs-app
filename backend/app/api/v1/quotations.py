@@ -14,6 +14,7 @@ from app.core.deps import DB, CurrentUser, CustomerUser
 from app.core.rate_limit import limiter
 from app.models import Product, Profile, Quotation, QuotationStatus, User
 from app.schemas.quotation import (
+    CatalogChoiceGroupOut,
     CatalogOptionOut,
     CatalogProductOut,
     QuotationIn,
@@ -26,8 +27,8 @@ from app.services.pricing import to_mm
 from app.services.quotation_views import customer_view, pdf_response, summary
 from app.services.quotations import (
     NOT_AVAILABLE,
-    available_options,
     build_snapshot,
+    catalog_offers,
     customer_details,
     price_product,
     quotable_products_query,
@@ -52,13 +53,27 @@ async def _own_quotation(
 async def list_catalog(user: CurrentUser, db: DB) -> list[CatalogProductOut]:
     """Quotable products with their available add-ons, for customers and for staff."""
     products = list(await db.scalars(quotable_products_query()))
-    options = await available_options(db, [p.id for p in products])
-    return [
-        CatalogProductOut.model_validate(p).model_copy(
-            update={"options": [CatalogOptionOut.model_validate(o) for o in options[p.id]]}
+    offers = await catalog_offers(db, products)
+    result = []
+    for p in products:
+        offer = offers[p.id]
+        if not offer.complete:  # e.g. every glass choice uses an archived material
+            continue
+        groups = [
+            CatalogChoiceGroupOut(
+                id=g.id,
+                name=g.name,
+                choices=[CatalogOptionOut.model_validate(c) for c in choices],
+            )
+            for g, choices in offer.groups
+        ]
+        add_ons = [CatalogOptionOut.model_validate(o) for o in offer.add_ons]
+        result.append(
+            CatalogProductOut.model_validate(p).model_copy(
+                update={"choice_groups": groups, "options": add_ons}
+            )
         )
-        for p in products
-    ]
+    return result
 
 
 @router.post("/quotations", status_code=status.HTTP_201_CREATED)
@@ -88,7 +103,7 @@ async def create_quotation(
     width_mm, height_mm = to_mm(body.width, body.unit), to_mm(body.height, body.unit)
     check_dimensions(product, width_mm, height_mm)
     settings = await get_pricing_settings(db)
-    breakdown, options = await price_product(
+    breakdown, picked = await price_product(
         db,
         product,
         settings,
@@ -120,7 +135,7 @@ async def create_quotation(
             height=body.height,
             unit=body.unit,
             breakdown=breakdown,
-            options=options,
+            picked=picked,
         ),
     )
     db.add(quotation)
@@ -134,7 +149,7 @@ async def create_quotation(
         entity_id=quotation.id,
         details={
             "product": product.code,
-            "options": [o.name for o in options],
+            "options": [o.name for o in picked.options],
             "total": str(breakdown.rounded_total),
         },
     )

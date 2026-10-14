@@ -12,7 +12,14 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import func, select
 
 from app.core.deps import DB, StaffUser
-from app.models import LaborRate, Material, Product, ProductComponent, ProductOption
+from app.models import (
+    LaborRate,
+    Material,
+    Product,
+    ProductComponent,
+    ProductOption,
+    ProductOptionGroup,
+)
 from app.schemas.catalog import (
     ComponentIn,
     ComponentOut,
@@ -23,6 +30,9 @@ from app.schemas.catalog import (
     MaterialIn,
     MaterialOut,
     MaterialUpdate,
+    OptionGroupIn,
+    OptionGroupOut,
+    OptionGroupUpdate,
     OptionIn,
     OptionOut,
     OptionUpdate,
@@ -45,8 +55,8 @@ from app.services.catalog import (
     get_pricing_settings,
     load_components,
     load_options,
-    to_component_input,
 )
+from app.services.options import load_groups, pick, priced_lines
 from app.services.pricing import compute_price, to_mm
 
 router = APIRouter(prefix="/admin", tags=["admin: catalogue"])
@@ -74,7 +84,15 @@ COMPONENT_FIELDS = [
     "sort_order",
     "option_id",
 ]
-OPTION_FIELDS = ["name", "description", "sort_order"]
+OPTION_FIELDS = [
+    "group_id",
+    "name",
+    "description",
+    "sort_order",
+    "width_reduction_mm",
+    "height_reduction_mm",
+]
+GROUP_FIELDS = ["name", "sort_order"]
 SETTINGS_FIELDS = [
     "markup_percent",
     "vat_percent",
@@ -315,8 +333,9 @@ async def _product_detail(db: DB, product: Product) -> ProductDetailOut:
             )
         )
     base = ProductOut.model_validate(product).model_dump()
+    groups = [OptionGroupOut.model_validate(g) for g in await load_groups(db, product.id)]
     options = [OptionOut.model_validate(o) for o in await load_options(db, product.id)]
-    return ProductDetailOut(**base, options=options, components=components)
+    return ProductDetailOut(**base, option_groups=groups, options=options, components=components)
 
 
 @router.get("/products")
@@ -514,47 +533,63 @@ async def price_preview(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Add at least one always-included line to this product",
         )
-    options = {o.id: o.name for o in await load_options(db, product.id)}
-    if any(option_id not in options for option_id in body.option_ids):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unknown add-on")
-    chosen = {option_id: options[option_id] for option_id in body.option_ids}
+    picked = pick(
+        await load_groups(db, product.id), await load_options(db, product.id), body.option_ids
+    )
+    chosen = {o.id for o in picked.options}
     used = [(c, item) for c, item in components if c.option_id is None or c.option_id in chosen]
 
     settings = await get_pricing_settings(db)
-    breakdown = compute_price(
-        [
-            to_component_input(c, item, chosen[c.option_id] if c.option_id else "")
-            for c, item in used
-        ],
-        width_mm=width_mm,
-        height_mm=height_mm,
-        quantity=body.quantity,
-        markup_percent=settings.markup_percent,
-        vat_percent=settings.vat_percent,
-        currency=settings.currency,
-        rounding_step=settings.rounding_step,
-    )
+    try:
+        breakdown = compute_price(
+            priced_lines(components, picked),
+            width_mm=width_mm,
+            height_mm=height_mm,
+            quantity=body.quantity,
+            markup_percent=settings.markup_percent,
+            vat_percent=settings.vat_percent,
+            currency=settings.currency,
+            rounding_step=settings.rounding_step,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     warnings = [f"{item.code} is archived" for _, item in used if not item.is_active]
     if not product.is_active:
         warnings.insert(0, "This product is archived; customers can't select it")
     return PricePreviewOut(**breakdown.as_dict(), warnings=warnings)
 
 
-# ---------- add-ons ----------
+# ---------- options: add-ons and the choices of choose-one groups ----------
 
 
 async def _ensure_option_name_free(
-    db: DB, product_id: uuid.UUID, name: str, *, ignore: uuid.UUID | None = None
+    db: DB,
+    product_id: uuid.UUID,
+    group_id: uuid.UUID | None,
+    name: str,
+    *,
+    ignore: uuid.UUID | None = None,
 ) -> None:
+    """Add-on names are unique among add-ons; choice names within their group."""
     stmt = select(ProductOption.id).where(
-        ProductOption.product_id == product_id, func.lower(ProductOption.name) == name.lower()
+        ProductOption.product_id == product_id,
+        ProductOption.group_id.is_(None)
+        if group_id is None
+        else ProductOption.group_id == group_id,
+        func.lower(ProductOption.name) == name.lower(),
     )
     if ignore is not None:
         stmt = stmt.where(ProductOption.id != ignore)
     if await db.scalar(stmt):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, f"This product already has an add-on called {name}"
-        )
+        what = "an add-on" if group_id is None else "a choice"
+        raise HTTPException(status.HTTP_409_CONFLICT, f"There is already {what} called {name}")
+
+
+async def _get_group(db: DB, product_id: uuid.UUID, group_id: uuid.UUID) -> ProductOptionGroup:
+    group = await db.get(ProductOptionGroup, group_id)
+    if group is None or group.product_id != product_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Choice group not found")
+    return group
 
 
 @router.post("/products/{product_id}/options", status_code=status.HTTP_201_CREATED)
@@ -562,7 +597,9 @@ async def add_option(
     product_id: uuid.UUID, body: OptionIn, user: StaffUser, db: DB, request: Request
 ) -> ProductDetailOut:
     product = await get_or_404(db, Product, product_id, "Product")
-    await _ensure_option_name_free(db, product.id, body.name)
+    if body.group_id is not None:
+        await _get_group(db, product.id, body.group_id)
+    await _ensure_option_name_free(db, product.id, body.group_id, body.name)
     option = ProductOption(product_id=product.id, **body.model_dump())
     db.add(option)
     await db.flush()
@@ -592,7 +629,9 @@ async def update_option(
     option = await get_option(db, product_id, option_id)
     values = _patch_values(body)
     if "name" in values:
-        await _ensure_option_name_free(db, product.id, values["name"], ignore=option.id)
+        await _ensure_option_name_free(
+            db, product.id, option.group_id, values["name"], ignore=option.id
+        )
     before = audit.snapshot(option, OPTION_FIELDS)
     for field, value in values.items():
         setattr(option, field, value)
@@ -637,6 +676,104 @@ async def remove_option(
         },
     )
     await db.delete(option)  # its lines go with it (ON DELETE CASCADE)
+    await db.commit()
+    return await _product_detail(db, product)
+
+
+# ---------- choose-one groups (e.g. Glass type) ----------
+
+
+async def _ensure_group_name_free(
+    db: DB, product_id: uuid.UUID, name: str, *, ignore: uuid.UUID | None = None
+) -> None:
+    stmt = select(ProductOptionGroup.id).where(
+        ProductOptionGroup.product_id == product_id,
+        func.lower(ProductOptionGroup.name) == name.lower(),
+    )
+    if ignore is not None:
+        stmt = stmt.where(ProductOptionGroup.id != ignore)
+    if await db.scalar(stmt):
+        raise HTTPException(status.HTTP_409_CONFLICT, f"There is already a group called {name}")
+
+
+@router.post("/products/{product_id}/option-groups", status_code=status.HTTP_201_CREATED)
+async def add_option_group(
+    product_id: uuid.UUID, body: OptionGroupIn, user: StaffUser, db: DB, request: Request
+) -> ProductDetailOut:
+    product = await get_or_404(db, Product, product_id, "Product")
+    await _ensure_group_name_free(db, product.id, body.name)
+    group = ProductOptionGroup(product_id=product.id, **body.model_dump())
+    db.add(group)
+    await db.flush()
+    audit.record(
+        db,
+        "product.group_added",
+        request=request,
+        actor_id=user.id,
+        entity="product",
+        entity_id=product.id,
+        details={"group_id": str(group.id), "after": audit.snapshot(group, GROUP_FIELDS)},
+    )
+    await db.commit()
+    return await _product_detail(db, product)
+
+
+@router.patch("/products/{product_id}/option-groups/{group_id}")
+async def update_option_group(
+    product_id: uuid.UUID,
+    group_id: uuid.UUID,
+    body: OptionGroupUpdate,
+    user: StaffUser,
+    db: DB,
+    request: Request,
+) -> ProductDetailOut:
+    product = await get_or_404(db, Product, product_id, "Product")
+    group = await _get_group(db, product_id, group_id)
+    values = _patch_values(body)
+    if "name" in values:
+        await _ensure_group_name_free(db, product.id, values["name"], ignore=group.id)
+    before = audit.snapshot(group, GROUP_FIELDS)
+    for field, value in values.items():
+        setattr(group, field, value)
+    after = audit.snapshot(group, GROUP_FIELDS)
+    if diff := audit.changes(before, after):
+        audit.record(
+            db,
+            "product.group_updated",
+            request=request,
+            actor_id=user.id,
+            entity="product",
+            entity_id=product.id,
+            details={"group_id": str(group.id), "changes": diff},
+        )
+    await db.commit()
+    return await _product_detail(db, product)
+
+
+@router.delete("/products/{product_id}/option-groups/{group_id}")
+async def remove_option_group(
+    product_id: uuid.UUID, group_id: uuid.UUID, user: StaffUser, db: DB, request: Request
+) -> ProductDetailOut:
+    """Delete a group with its choices and their lines. Quotations keep their own copy."""
+    product = await get_or_404(db, Product, product_id, "Product")
+    group = await _get_group(db, product_id, group_id)
+    choices = await db.scalar(
+        select(func.count()).select_from(ProductOption).where(ProductOption.group_id == group.id)
+    )
+    audit.record(
+        db,
+        "product.group_removed",
+        request=request,
+        actor_id=user.id,
+        entity="product",
+        entity_id=product.id,
+        details={
+            "group_id": str(group.id),
+            "before": audit.snapshot(group, GROUP_FIELDS),
+            "choices_removed": choices or 0,
+        },
+    )
+    await db.delete(group)  # its choices and their lines go with it (ON DELETE CASCADE)
     await db.commit()
     return await _product_detail(db, product)
 
