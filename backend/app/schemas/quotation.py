@@ -3,16 +3,14 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models import ProductCategory, QuotationStatus
 from app.schemas.catalog import OptionIds, PricePreviewOut
+from app.schemas.common import OptionalEmail, PersonName, PhMobile, PlaceName
 
 Size = Annotated[Decimal, Field(gt=0, le=10_000, max_digits=8, decimal_places=2)]
 Money = Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=2)]
-
-# Walk-in clients may give a landline too: digits, spaces, dashes, brackets, optional leading +.
-PHONE_PATTERN = r"^\+?[0-9(][0-9 ()-]{5,18}[0-9]$"
 
 
 class CatalogOptionOut(BaseModel):
@@ -54,16 +52,17 @@ class QuotationIn(BaseModel):
 
 
 class ClientIn(BaseModel):
-    """A walk-in client's details, typed in by staff (like a customer profile, minus age)."""
+    """A walk-in client's details, typed in by staff: same rules as a customer profile, minus
+    age, plus an optional email."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    full_name: str = Field(min_length=2, max_length=120)
-    contact_number: str = Field(pattern=PHONE_PATTERN, max_length=20)
-    email: EmailStr | None = None
+    full_name: PersonName
+    contact_number: PhMobile
+    email: OptionalEmail = None
     address_line: str = Field(min_length=5, max_length=200)
-    city: str = Field(min_length=2, max_length=80)
-    province: str = Field(min_length=2, max_length=80)
+    city: PlaceName
+    province: PlaceName
 
 
 class StaffQuotationIn(QuotationIn):

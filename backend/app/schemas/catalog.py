@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from app.models import Basis, MaterialCategory, PriceUnit, ProductCategory
+from app.schemas.common import OptionalPersonName
 
 
 def _upper(v: object) -> object:
@@ -240,7 +241,7 @@ class PricingSettingsIn(_In):
     quote_terms: str = Field(max_length=4000)
     # Totals round up to a multiple of this (100: 21,423 -> 21,500); 0 turns rounding off.
     rounding_step: Annotated[Decimal, Field(ge=0, le=100_000, max_digits=8, decimal_places=2)]
-    owner_name: str = Field(max_length=120)  # printed under the owner's signature line
+    owner_name: OptionalPersonName  # printed under the owner's signature line
 
 
 class PricingSettingsOut(_Out):
