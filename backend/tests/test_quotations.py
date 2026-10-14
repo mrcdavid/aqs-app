@@ -298,10 +298,13 @@ async def test_pdf_shows_one_amount_payment_terms_and_signatures(
     await admin.post(f"{API}/admin/quotations/{q['id']}/approve", json={})
     final = (await customer.get(f"{API}/quotations/{q['id']}/pdf")).content
 
-    assert b"Estimated amount" in draft and b"Total amount" in final
+    assert b"ESTIMATED AMOUNT" in draft and b"TOTAL AMOUNT" in final
+    # The draft watermark is drawn last, i.e. in front of everything (the signatures come last).
+    assert draft.rindex(b"PENDING APPROVAL") > draft.rindex(b"Juan Dela Cruz")
+    assert b"PENDING APPROVAL" not in final
     for pdf in (draft, final):
         assert b"12,000.00" in pdf  # the rounded amount
-        assert b"50% downpayment" in pdf and b"50% upon completion and installation" in pdf
+        assert b"50% DOWNPAYMENT" in pdf and b"50% UPON COMPLETION AND INSTALLATION" in pdf
         assert b"6,000.00" in pdf
         assert b"Cleo David" in pdf and b"Juan Dela Cruz" in pdf  # owner and client signatures
         for hidden in (b"VAT", b"1,283.27", b"11,977.19", b"5,346.96"):
@@ -495,7 +498,7 @@ async def test_bad_add_ons_are_rejected(
             f"{API}/quotations",
             json={"product_id": product_id, **REQUEST, "option_ids": option_ids},
         )
-        assert r.status_code == 422 and r.json()["detail"] == "This add-on is not available"
+        assert r.status_code == 422 and r.json()["detail"] == "This option is not available"
     twice = {"product_id": product_id, **REQUEST, "option_ids": [open_back_id, open_back_id]}
     assert (await customer.post(f"{API}/quotations", json=twice)).status_code == 422
 

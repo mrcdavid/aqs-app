@@ -148,3 +148,17 @@ def test_add_on_lines_are_priced_and_tagged() -> None:
     assert extra.lines[-1].option == "Open back aluminum"
     assert extra.lines[-1].cost == D("1320.00")  # 4.4 m around the window x 300
     assert extra.total == base.total + D("1320.00")  # grows with the size, like any line
+
+
+def test_lines_can_be_measured_smaller() -> None:
+    """Inside an open back frame the window is smaller than the opening typed."""
+    glass = line(Basis.AREA, PriceUnit.SQM, "1000")
+    inner = ComponentInput(
+        **{**glass.__dict__, "width_reduction_mm": 100, "height_reduction_mm": 100}
+    )
+    kwargs = {"markup_percent": D(0), "vat_percent": D(0), "currency": "PHP"}
+    b = compute_price([glass, inner], width_mm=1200, height_mm=1000, quantity=1, **kwargs)
+    assert [(x.width_mm, x.height_mm) for x in b.lines] == [(1200, 1000), (1100, 900)]
+    assert [x.cost for x in b.lines] == [D("1200.00"), D("990.00")]  # 1.2 m² vs 0.99 m²
+    with pytest.raises(ValueError, match="too small"):
+        compute_price([inner], width_mm=100, height_mm=1000, quantity=1, **kwargs)

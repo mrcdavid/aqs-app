@@ -82,7 +82,9 @@ async def build_sliding_window(admin: AsyncClient) -> str:
     return pid
 
 
-async def add_open_back(admin: AsyncClient, pid: str, suffix: str = "") -> dict[str, Any]:
+async def add_open_back(
+    admin: AsyncClient, pid: str, suffix: str = "", reduction_mm: int = 0
+) -> dict[str, Any]:
     """Optional add-on: open back aluminum at 300/m plus 100/m to fit it, both around the opening.
 
     For 1200 x 1000 mm that adds 4.4 m x 400 = 1,760.00 to the cost of one window.
@@ -96,7 +98,12 @@ async def add_open_back(admin: AsyncClient, pid: str, suffix: str = "") -> dict[
     detail = await create(
         admin,
         f"products/{pid}/options",
-        {"name": "Open back aluminum", "description": "Extra frame behind the window"},
+        {
+            "name": "Open back aluminum",
+            "description": "Extra frame behind the window",
+            "width_reduction_mm": reduction_mm,
+            "height_reduction_mm": reduction_mm,
+        },
     )
     option = detail["options"][0]
     for body in [
