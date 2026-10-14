@@ -13,6 +13,13 @@ export interface CatalogOption {
   description: string
 }
 
+/** A choose-one question, e.g. Glass type; exactly one choice must be sent. */
+export interface CatalogChoiceGroup {
+  id: string
+  name: string
+  choices: CatalogOption[]
+}
+
 export interface CatalogProduct {
   id: string
   code: string
@@ -23,6 +30,8 @@ export interface CatalogProduct {
   max_width_mm: number
   min_height_mm: number
   max_height_mm: number
+  choice_groups: CatalogChoiceGroup[]
+  /** Add-ons: tick any */
   options: CatalogOption[]
 }
 
@@ -47,6 +56,8 @@ export interface Quotation {
   product_name: string
   product_description: string
   includes: string[]
+  /** One per choice group, e.g. [{ group: 'Glass type', name: 'Reflective' }] */
+  choices: { group: string; name: string }[]
   /** Chosen add-ons, e.g. ["Open back aluminum"] */
   options: string[]
   input_width: string
@@ -74,6 +85,7 @@ export interface QuotationRequest {
   height: string
   unit: LengthUnit
   quantity: number
+  /** Chosen add-ons plus one choice per group */
   option_ids: string[]
 }
 

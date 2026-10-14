@@ -44,12 +44,23 @@ export interface Product {
   updated_at: string
 }
 
-/** An optional add-on of a product (e.g. "Open back aluminum"), made of template lines. */
+/** A choose-one question of a product, e.g. Glass type. Its choices are ProductOptions. */
+export interface ProductOptionGroup {
+  id: string
+  name: string
+  sort_order: number
+}
+
+/** An add-on (group_id null, tick or not) or one choice of a group, made of template lines. */
 export interface ProductOption {
   id: string
+  group_id: string | null
   name: string
   description: string
   sort_order: number
+  /** When chosen, the rest of the window is measured this much narrower / shorter (open back). */
+  width_reduction_mm: number
+  height_reduction_mm: number
 }
 
 export interface Component {
@@ -72,6 +83,7 @@ export interface Component {
 }
 
 export interface ProductDetail extends Product {
+  option_groups: ProductOptionGroup[]
   options: ProductOption[]
   components: Component[]
 }
@@ -100,8 +112,11 @@ export interface PriceLine {
   unit_price: string
   quantity: string
   cost: string
-  /** Add-on name; '' = always included */
+  /** Add-on or choice name; '' = always included */
   option: string
+  /** Size this line was measured at (null in quotations made before choice groups) */
+  width_mm: number | null
+  height_mm: number | null
 }
 
 export interface PricePreview {
@@ -286,6 +301,14 @@ export const adminApi = {
     api<ProductDetail>(`/admin/products/${productId}/components/${componentId}`, {
       method: 'DELETE',
     }),
+
+  addOptionGroup: (productId: string, b: Body) =>
+    api<ProductDetail>(`/admin/products/${productId}/option-groups`, json('POST', b)),
+  updateOptionGroup: (productId: string, groupId: string, b: Body) =>
+    api<ProductDetail>(`/admin/products/${productId}/option-groups/${groupId}`, json('PATCH', b)),
+  /** Also removes the group's choices and their lines. */
+  removeOptionGroup: (productId: string, groupId: string) =>
+    api<ProductDetail>(`/admin/products/${productId}/option-groups/${groupId}`, { method: 'DELETE' }),
 
   addOption: (productId: string, b: Body) =>
     api<ProductDetail>(`/admin/products/${productId}/options`, json('POST', b)),
