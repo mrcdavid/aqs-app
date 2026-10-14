@@ -7,7 +7,7 @@ import { useLoaderData, useNavigate } from 'react-router'
 import { saveProfile } from '../../api/profile'
 import { Button, ButtonLink } from '../../components/ui/Button'
 import { Card, ErrorBanner, PageHeader } from '../../components/ui/Card'
-import { Field, inputClass } from '../../components/ui/Field'
+import { Field, inputClass, RequiredNote } from '../../components/ui/Field'
 import { messageOf } from '../../lib/errors'
 import { profileSchema, type ProfileInput } from '../../lib/schemas'
 import { toast } from '../../stores/feedback'
@@ -38,7 +38,7 @@ export function ProfilePage() {
   }
 
   const text = (name: Exclude<keyof ProfileInput, 'age'>, label: string, auto: string, extra = {}) => (
-    <Field label={label} htmlFor={name} error={errors[name]?.message}>
+    <Field label={label} htmlFor={name} required error={errors[name]?.message}>
       <input id={name} autoComplete={auto} className={inputClass} aria-invalid={!!errors[name]} {...extra} {...register(name)} />
     </Field>
   )
@@ -52,11 +52,12 @@ export function ProfilePage() {
       />
       <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6">
         <ErrorBanner message={serverError} />
+        <RequiredNote />
         <fieldset disabled={isSubmitting} className="space-y-6">
           <Card title="About you" icon={UserRound}>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="sm:col-span-2">{text('full_name', 'Full name', 'name', { autoFocus: !profile })}</div>
-              <Field label="Age" htmlFor="age" error={errors.age?.message}>
+              <Field label="Age" htmlFor="age" required error={errors.age?.message}>
                 <input
                   id="age"
                   type="number"
