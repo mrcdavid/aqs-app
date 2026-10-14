@@ -3,17 +3,20 @@ import type { ReactNode } from 'react'
 interface FieldProps {
   label: string
   htmlFor: string
+  /** Shows a red * after the label (and "required" for screen readers). */
+  required?: boolean
   error?: string
   hint?: string
   children: ReactNode
   className?: string
 }
 
-export function Field({ label, htmlFor, error, hint, children, className = '' }: FieldProps) {
+export function Field({ label, htmlFor, required, error, hint, children, className = '' }: FieldProps) {
   return (
     <div className={`space-y-1.5 ${className}`}>
       <label htmlFor={htmlFor} className="block text-sm font-medium">
         {label}
+        {required && <RequiredMark />}
       </label>
       {children}
       {hint && !error && <p className="text-xs text-muted">{hint}</p>}
@@ -23,6 +26,27 @@ export function Field({ label, htmlFor, error, hint, children, className = '' }:
         </p>
       )}
     </div>
+  )
+}
+
+/** Red asterisk for required inputs; also for labels outside <Field> (e.g. radio groups). */
+export function RequiredMark() {
+  return (
+    <>
+      <span aria-hidden className="ml-0.5 text-danger">
+        *
+      </span>
+      <span className="sr-only"> (required)</span>
+    </>
+  )
+}
+
+/** One line at the top of a form explaining the asterisk. */
+export function RequiredNote() {
+  return (
+    <p className="text-xs text-muted">
+      Fields marked <span className="text-danger">*</span> are required.
+    </p>
   )
 }
 
