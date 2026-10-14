@@ -8,8 +8,13 @@ one labour rate, multiplied by a measurement of the opening:
 
 Basis values: area (m²), perimeter / width / height (m), fixed (1 per product unit).
 
-Lines without an option are always included. Lines that belong to a ProductOption (an optional
-add-on such as an open back aluminum frame) are only priced when that add-on is chosen.
+Lines without an option are always included. Lines that belong to a ProductOption are only
+priced when that option is chosen. An option is either:
+  - an add-on (no group), ticked or not, e.g. "Open back (outer jamb)";
+  - a choice in a ProductOptionGroup, where exactly one must be chosen, e.g. Glass type:
+    "Ordinary" or "Reflective".
+An option may make the window smaller (width/height_reduction_mm): the size typed is then the wall
+opening, the option's own lines use it as is, and every other line is measured that much smaller.
 """
 
 import uuid
@@ -117,18 +122,44 @@ class Product(UUIDPk, Timestamps, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=true(), default=True)
 
 
-class ProductOption(UUIDPk, Timestamps, Base):
-    """An optional add-on of a product (e.g. "Open back aluminum"), made of template lines."""
+class ProductOptionGroup(UUIDPk, Timestamps, Base):
+    """A "choose exactly one" question of a product (e.g. Glass type); its options are choices."""
 
-    __tablename__ = "product_options"
+    __tablename__ = "product_option_groups"
     __table_args__ = (UniqueConstraint("product_id", "name"),)
 
     product_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("products.id", ondelete="CASCADE"), index=True
     )
     name: Mapped[str] = mapped_column(String(80))
+    sort_order: Mapped[int] = mapped_column(Integer, server_default="0", default=0)
+
+
+class ProductOption(UUIDPk, Timestamps, Base):
+    """An add-on (group_id None) or one choice of a group, made of template lines."""
+
+    __tablename__ = "product_options"
+    __table_args__ = (
+        UniqueConstraint("product_id", "group_id", "name"),
+        CheckConstraint(
+            "width_reduction_mm BETWEEN 0 AND 2000 AND height_reduction_mm BETWEEN 0 AND 2000",
+            name="reduction_range",
+        ),
+    )
+
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), index=True
+    )
+    # None = add-on (tick or not); else one choice of this group. Deleting the group deletes it.
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("product_option_groups.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(80))
     description: Mapped[str] = mapped_column(String(300), server_default="", default="")
     sort_order: Mapped[int] = mapped_column(Integer, server_default="0", default=0)
+    # When chosen, every other line is measured this much narrower / shorter (see module doc).
+    width_reduction_mm: Mapped[int] = mapped_column(Integer, server_default="0", default=0)
+    height_reduction_mm: Mapped[int] = mapped_column(Integer, server_default="0", default=0)
 
 
 class ProductComponent(UUIDPk, Timestamps, Base):
