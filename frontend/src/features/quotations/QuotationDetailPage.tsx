@@ -45,14 +45,17 @@ export function QuotationDetailPage() {
   const [cancelling, setCancelling] = useState(false)
   const money = (v: string) => formatMoney(v, q.currency)
   const hasPdf = q.status === 'pending' || q.status === 'approved'
-  const status = STATUS[q.status]
+  const status =
+    q.status === 'cancelled' && q.cancelled_by_staff
+      ? { ...STATUS.cancelled, text: `Our team cancelled this request.${q.review_note ? ' See their note below.' : ''}` }
+      : STATUS[q.status]
 
   async function cancel() {
     const ok = await confirmAction({
       title: 'Cancel this request?',
       message: "Our team won't review it. You can always request a new quotation later.",
-      confirmLabel: 'Cancel request',
-      cancelLabel: 'Keep it',
+      confirmLabel: 'Yes, cancel it',
+      cancelLabel: 'No, keep it',
       tone: 'danger',
     })
     if (!ok) return

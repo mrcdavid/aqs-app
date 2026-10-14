@@ -77,6 +77,8 @@ export interface Quotation {
   review_note: string | null
   valid_until: string | null
   can_cancel: boolean
+  /** Cancelled by the shop rather than by the customer */
+  cancelled_by_staff: boolean
 }
 
 export interface QuotationRequest {

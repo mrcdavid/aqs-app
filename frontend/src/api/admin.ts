@@ -334,6 +334,9 @@ export const adminApi = {
     api<AdminQuotation>(`/admin/quotations/${id}/approve`, json('POST', { note, final_total: finalTotal })),
   rejectQuotation: (id: string, note: string) =>
     api<AdminQuotation>(`/admin/quotations/${id}/reject`, json('POST', { note })),
+  /** Withdraw a pending request; the note is optional. */
+  cancelQuotation: (id: string, note: string) =>
+    api<AdminQuotation>(`/admin/quotations/${id}/cancel`, json('POST', { note })),
   quotationPdfUrl: (id: string) => `/api/v1/admin/quotations/${id}/pdf`,
 
   auditLog: (filters: AuditFilters) => {

@@ -241,7 +241,7 @@ async def test_roles_are_enforced(customer: AsyncClient, admin: AsyncClient, pro
 async def test_cancel(customer: AsyncClient, admin: AsyncClient, product_id: str):
     q = await request_quote(customer, product_id)
     r = await customer.post(f"{API}/quotations/{q['id']}/cancel")
-    assert r.json()["status"] == "cancelled"
+    assert r.json()["status"] == "cancelled" and r.json()["cancelled_by_staff"] is False
     assert (await customer.post(f"{API}/quotations/{q['id']}/cancel")).status_code == 409
     assert (await customer.get(f"{API}/quotations/{q['id']}/pdf")).status_code == 409
     r = await admin.post(f"{API}/admin/quotations/{q['id']}/approve", json={})
@@ -523,3 +523,42 @@ async def test_empty_add_on_is_not_offered(
     r = await admin.post(f"{API}/admin/products/{product_id}/options", json={"name": "Grill"})
     assert r.status_code == 201
     assert (await customer.get(f"{API}/catalog/products")).json()[0]["options"] == []
+
+
+# ---------- staff cancelling pending requests ----------
+
+
+async def test_staff_can_cancel_a_pending_request(
+    customer: AsyncClient, admin: AsyncClient, product_id: str, db: AsyncSession
+):
+    q = await request_quote(customer, product_id)
+    url = f"{API}/admin/quotations/{q['id']}"
+    r = await admin.post(f"{url}/cancel", json={"note": "Client changed their mind"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "cancelled" and r.json()["reviewed_by_email"] == STAFF_EMAIL
+
+    mine = (await customer.get(f"{API}/quotations/{q['id']}")).json()
+    assert mine["status"] == "cancelled" and mine["cancelled_by_staff"] is True
+    assert mine["review_note"] == "Client changed their mind" and mine["can_cancel"] is False
+
+    # Only pending requests can be cancelled, and a cancelled one can't be approved or printed.
+    assert (await admin.post(f"{url}/cancel", json={})).status_code == 409
+    assert (await admin.post(f"{url}/approve", json={})).status_code == 409
+    assert (await customer.get(f"{API}/quotations/{q['id']}/pdf")).status_code == 409
+
+    log = await db.scalar(select(AuditLog).where(AuditLog.action == "quotation.cancelled"))
+    assert log is not None and log.details == {"by": "staff"}
+
+
+async def test_staff_can_cancel_a_walk_in_quote_without_a_reason(
+    admin: AsyncClient, product_id: str
+):
+    q = await staff_quote(admin, product_id)
+    r = await admin.post(f"{API}/admin/quotations/{q['id']}/cancel", json={})
+    assert r.json()["status"] == "cancelled" and r.json()["review_note"] is None
+
+
+async def test_customers_cannot_use_the_staff_cancel(customer: AsyncClient, product_id: str):
+    q = await request_quote(customer, product_id)
+    r = await customer.post(f"{API}/admin/quotations/{q['id']}/cancel", json={})
+    assert r.status_code == 403

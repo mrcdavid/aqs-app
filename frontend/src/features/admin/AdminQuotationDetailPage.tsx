@@ -1,4 +1,5 @@
 import {
+  Ban,
   Calculator,
   CheckCircle2,
   FileDown,
@@ -25,10 +26,10 @@ import { Field, inputClass } from '../../components/ui/Field'
 import { Modal } from '../../components/ui/Modal'
 import { messageOf } from '../../lib/errors'
 import { BASIS_LABEL, formatDate, formatMoney, trimDecimal, UNIT_LABEL } from '../../lib/format'
-import { toast } from '../../stores/feedback'
+import { confirmAction, toast } from '../../stores/feedback'
 import type { adminQuotationDetailLoader } from './loaders'
 
-type Review = 'approve' | 'reject'
+type Review = 'approve' | 'reject' | 'cancel'
 
 export function AdminQuotationDetailPage() {
   const { quotation: q } = useLoaderData<typeof adminQuotationDetailLoader>()
@@ -49,7 +50,8 @@ export function AdminQuotationDetailPage() {
         description={
           <>
             {q.walk_in ? `Created ${formatDate(q.created_at)} by ${q.created_by_email}` : `Requested ${formatDate(q.created_at)}`}
-            {q.reviewed_at && ` · reviewed ${formatDate(q.reviewed_at)} by ${q.reviewed_by_email}`}
+            {q.reviewed_at && ` · ${q.status} ${formatDate(q.reviewed_at)} by ${q.reviewed_by_email}`}
+            {q.status === 'cancelled' && !q.reviewed_at && ` · cancelled by the customer`}
             {q.valid_until && ` · valid until ${formatDate(q.valid_until)}`}
           </>
         }
@@ -69,6 +71,9 @@ export function AdminQuotationDetailPage() {
             )}
             {q.status === 'pending' && (
               <>
+                <Button variant="secondary" icon={Ban} onClick={() => setReview('cancel')} className="flex-1 sm:flex-none">
+                  Cancel
+                </Button>
                 <Button variant="danger-soft" icon={XCircle} onClick={() => setReview('reject')} className="flex-1 sm:flex-none">
                   Reject
                 </Button>
@@ -241,6 +246,7 @@ export function AdminQuotationDetailPage() {
       <ReviewModal
         review={review}
         total={q.total}
+        currency={q.currency}
         calculated={money(b.rounded_total)}
         customer={q.customer.full_name}
         walkIn={q.walk_in}
@@ -253,9 +259,12 @@ export function AdminQuotationDetailPage() {
                 ? `Approved as ${approved.number}. Open the official PDF to print it for the client.`
                 : `Approved as ${approved.number}. The customer can now print the official PDF.`,
             )
-          } else {
+          } else if (action === 'reject') {
             await adminApi.rejectQuotation(q.id, note)
             toast.success(q.walk_in ? 'Request rejected.' : 'Request rejected. The customer will see your note.')
+          } else {
+            await adminApi.cancelQuotation(q.id, note)
+            toast.success('Request cancelled.')
           }
           setReview(null)
           revalidate()
@@ -270,6 +279,7 @@ const AMOUNT = /^\d{1,10}(\.\d{1,2})?$/
 function ReviewModal({
   review,
   total,
+  currency,
   calculated,
   customer,
   walkIn,
@@ -279,6 +289,7 @@ function ReviewModal({
   review: Review | null
   /** Current quoted amount, a decimal string like "21500.00" */
   total: string
+  currency: string
   /** Formatted calculated (rounded-up) price, for the hint */
   calculated: string
   customer: string
@@ -290,8 +301,40 @@ function ReviewModal({
   const [amount, setAmount] = useState(total)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const approving = review === 'approve'
   const who = walkIn ? 'client' : 'customer'
+  const approving = review === 'approve'
+
+  const text = {
+    approve: {
+      icon: CheckCircle2,
+      tone: 'success' as const,
+      title: 'Approve and issue quotation',
+      description: `${customer} will get an official quotation with a quote number for the amount below.`,
+      button: 'Approve',
+      noteLabel: `Note to ${who} (optional)`,
+      noteHint: 'Printed on the official PDF.',
+    },
+    reject: {
+      icon: XCircle,
+      tone: 'danger' as const,
+      title: 'Reject this request',
+      description: walkIn
+        ? 'The request will be marked as rejected, with your note.'
+        : `${customer} will see the request as rejected, with your note.`,
+      button: 'Reject request',
+      noteLabel: 'Reason',
+      noteHint: 'e.g. “Size too large, please call us.”',
+    },
+    cancel: {
+      icon: Ban,
+      tone: 'danger' as const,
+      title: 'Cancel this request',
+      description: `Use this when the ${who} no longer needs the quotation. It is marked as cancelled, not rejected.`,
+      button: 'Cancel request',
+      noteLabel: `Reason (optional)`,
+      noteHint: walkIn ? 'For your records.' : 'The customer will see this.',
+    },
+  }[review ?? 'approve']
 
   function close() {
     setNote('')
@@ -302,7 +345,7 @@ function ReviewModal({
 
   async function submit() {
     if (!review) return
-    if (!approving && note.trim().length < 3) {
+    if (review === 'reject' && note.trim().length < 3) {
       setError(`Please write a short note so the ${who} knows why.`)
       return
     }
@@ -311,6 +354,34 @@ function ReviewModal({
       setError('Enter the final amount, like 21500 or 21500.50.')
       return
     }
+
+    // Yes / No before anything is saved; "No" goes back to this dialog with the inputs kept.
+    const ok = await confirmAction(
+      {
+        approve: {
+          title: 'Approve this quotation?',
+          message: `${customer} gets an official quotation for ${formatMoney(finalAmount, currency)}. Approved quotations can't be changed.`,
+          confirmLabel: 'Yes, approve',
+          cancelLabel: 'No',
+        },
+        reject: {
+          title: 'Reject this request?',
+          message: `The request from ${customer} will be marked as rejected. This can't be undone.`,
+          confirmLabel: 'Yes, reject',
+          cancelLabel: 'No',
+          tone: 'danger' as const,
+        },
+        cancel: {
+          title: 'Cancel this request?',
+          message: `The request from ${customer} will be cancelled. This can't be undone.`,
+          confirmLabel: 'Yes, cancel it',
+          cancelLabel: 'No, keep it',
+          tone: 'danger' as const,
+        },
+      }[review],
+    )
+    if (!ok) return
+
     setBusy(true)
     setError(null)
     try {
@@ -327,23 +398,17 @@ function ReviewModal({
     <Modal
       open={review !== null}
       onClose={close}
-      icon={approving ? CheckCircle2 : XCircle}
-      tone={approving ? 'success' : 'danger'}
-      title={approving ? 'Approve and issue quotation' : 'Reject this request'}
-      description={
-        approving
-          ? `${customer} will get an official quotation with a quote number for the amount below.`
-          : walkIn
-            ? 'The request will be marked as rejected, with your note.'
-            : `${customer} will see the request as rejected, with your note.`
-      }
+      icon={text.icon}
+      tone={text.tone}
+      title={text.title}
+      description={text.description}
       footer={
         <>
           <Button variant="secondary" icon={X} onClick={close}>
-            Cancel
+            Close
           </Button>
-          <Button variant={approving ? 'primary' : 'danger'} icon={approving ? CheckCircle2 : XCircle} loading={busy} onClick={submit}>
-            {approving ? 'Approve' : 'Reject request'}
+          <Button variant={approving ? 'primary' : 'danger'} icon={text.icon} loading={busy} onClick={submit}>
+            {text.button}
           </Button>
         </>
       }
@@ -366,12 +431,7 @@ function ReviewModal({
             />
           </Field>
         )}
-        <Field
-          label={approving ? `Note to ${who} (optional)` : 'Reason'}
-          htmlFor="review-note"
-          required={!approving}
-          hint={approving ? 'Printed on the official PDF.' : 'e.g. “Size too large, please call us.”'}
-        >
+        <Field label={text.noteLabel} htmlFor="review-note" required={review === 'reject'} hint={text.noteHint}>
           <textarea
             id="review-note"
             autoFocus={!approving}
