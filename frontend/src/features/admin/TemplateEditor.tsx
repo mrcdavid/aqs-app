@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { AlertTriangle, Boxes, HardHat, Layers, PackagePlus, Pencil, Plus, Save, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Boxes, HardHat, Layers, ListChecks, PackagePlus, Pencil, Plus, Save, Trash2, X } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 
@@ -12,6 +12,7 @@ import {
   type PriceUnit,
   type ProductDetail,
   type ProductOption,
+  type ProductOptionGroup,
 } from '../../api/admin'
 import { Badge } from '../../components/ui/Badge'
 import { Button, ButtonLink, IconButton } from '../../components/ui/Button'
@@ -21,7 +22,14 @@ import { Modal } from '../../components/ui/Modal'
 import { messageOf } from '../../lib/errors'
 import { BASES_FOR_UNIT, BASIS_LABEL, formatMoney, trimDecimal, UNIT_LABEL } from '../../lib/format'
 import { confirmAction, toast } from '../../stores/feedback'
-import { componentSchema, optionSchema, type ComponentForm, type OptionForm } from './schemas'
+import {
+  componentSchema,
+  optionGroupSchema,
+  optionSchema,
+  type ComponentForm,
+  type OptionForm,
+  type OptionGroupForm,
+} from './schemas'
 import { useCurrency } from './useCurrency'
 
 interface Props {
@@ -33,18 +41,24 @@ interface Props {
 
 /** null = closed; line null = adding a new line to `optionId` ('' = always included). */
 type LineEditing = { line: Component | null; optionId: string } | null
-/** null = closed; 'new' = adding an add-on; otherwise renaming that add-on. */
-type OptionEditing = ProductOption | 'new' | null
+/** null = closed; option null = adding one: a choice of `groupId`, or an add-on (groupId null). */
+type OptionEditing = { option: ProductOption | null; groupId: string | null } | null
+/** null = closed; 'new' = adding a group; otherwise renaming that group. */
+type GroupEditing = ProductOptionGroup | 'new' | null
 
 export function TemplateEditor({ product, materials, laborRates, onChanged }: Props) {
   const currency = useCurrency()
   const [editing, setEditing] = useState<LineEditing>(null)
   const [editingOption, setEditingOption] = useState<OptionEditing>(null)
+  const [editingGroup, setEditingGroup] = useState<GroupEditing>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const hasItems = materials.some((m) => m.is_active) || laborRates.some((r) => r.is_active)
   const editingId = editing?.line?.id ?? null
   const baseLines = product.components.filter((c) => c.option_id === null)
   const linesOf = (o: ProductOption) => product.components.filter((c) => c.option_id === o.id)
+  const addOns = product.options.filter((o) => o.group_id === null)
+  const choicesOf = (g: ProductOptionGroup) => product.options.filter((o) => o.group_id === g.id)
+  const hasOptions = product.options.length > 0 || product.option_groups.length > 0
 
   async function remove(c: Component) {
     const ok = await confirmAction({
@@ -68,17 +82,39 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
 
   async function removeOption(o: ProductOption) {
     const count = linesOf(o).length
+    const what = o.group_id ? 'choice' : 'add-on'
     const ok = await confirmAction({
-      title: `Delete the add-on “${o.name}”?`,
+      title: `Delete the ${what} “${o.name}”?`,
       message: `${count === 1 ? 'Its 1 line is' : `Its ${count} lines are`} removed from this template. Quotations already made keep their prices.`,
-      confirmLabel: 'Delete add-on',
+      confirmLabel: `Delete ${what}`,
       tone: 'danger',
     })
     if (!ok) return
     setBusyId(o.id)
     try {
       await adminApi.removeOption(product.id, o.id)
-      toast.success(`Add-on “${o.name}” deleted.`)
+      toast.success(`${o.group_id ? 'Choice' : 'Add-on'} “${o.name}” deleted.`)
+      onChanged()
+    } catch (err) {
+      toast.error(messageOf(err))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function removeGroup(g: ProductOptionGroup) {
+    const count = choicesOf(g).length
+    const ok = await confirmAction({
+      title: `Delete the group “${g.name}”?`,
+      message: `${count === 1 ? 'Its 1 choice is' : `Its ${count} choices are`} removed from this template, with their lines. Quotations already made keep their prices.`,
+      confirmLabel: 'Delete group',
+      tone: 'danger',
+    })
+    if (!ok) return
+    setBusyId(g.id)
+    try {
+      await adminApi.removeOptionGroup(product.id, g.id)
+      toast.success(`Group “${g.name}” deleted.`)
       onChanged()
     } catch (err) {
       toast.error(messageOf(err))
@@ -172,7 +208,10 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
       actions={
         hasItems && (
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="secondary" icon={PackagePlus} onClick={() => setEditingOption('new')}>
+            <Button size="sm" variant="secondary" icon={ListChecks} onClick={() => setEditingGroup('new')}>
+              Add a choice group
+            </Button>
+            <Button size="sm" variant="secondary" icon={PackagePlus} onClick={() => setEditingOption({ option: null, groupId: null })}>
               Add an add-on
             </Button>
             <Button size="sm" icon={Plus} onClick={() => setEditing({ line: null, optionId: '' })}>
@@ -184,8 +223,9 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
     >
       <p className="mb-4 rounded-xl bg-surface-2 p-3 text-sm text-muted">
         Each line costs <strong className="text-ink">measurement × factor × (1 + waste %) × price</strong>. Example: two tracks
-        along the width → <em>Width</em>, factor <em>2</em>. <strong className="text-ink">Add-ons</strong> are optional extras
-        (e.g. an open back aluminum frame): their lines are only priced when someone ticks the add-on while quoting.
+        along the width → <em>Width</em>, factor <em>2</em>. <strong className="text-ink">Choice groups</strong> ask one
+        question with one answer (e.g. Glass type: Ordinary or Reflective); only the chosen answer's lines are priced.{' '}
+        <strong className="text-ink">Add-ons</strong> are optional extras (e.g. an open back frame), priced only when ticked.
       </p>
 
       {!hasItems && (
@@ -206,7 +246,7 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
       )}
 
       <div className="space-y-6">
-        <Section title="Always included" text={product.options.length > 0 ? 'Priced on every quotation.' : undefined}>
+        <Section title="Always included" text={hasOptions ? 'Priced on every quotation.' : undefined}>
           {baseLines.length === 0
             ? hasItems && (
                 <EmptyState
@@ -223,8 +263,68 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
             : lineList(baseLines)}
         </Section>
 
-        {product.options.map((o) => {
+        {product.option_groups.map((g) => {
+          const choices = choicesOf(g)
+          return (
+            <Section
+              key={g.id}
+              title={g.name}
+              badge={
+                <Badge tone="brand" icon={ListChecks}>
+                  Choose one
+                </Badge>
+              }
+              text="Customers pick exactly one choice; the first is selected for them."
+              actions={
+                <>
+                  <Button size="sm" variant="secondary" icon={Plus} onClick={() => setEditingOption({ option: null, groupId: g.id })}>
+                    Add a choice
+                  </Button>
+                  <IconButton icon={Pencil} tone="brand" label={`Rename group ${g.name}`} onClick={() => setEditingGroup(g)} />
+                  <IconButton icon={Trash2} tone="danger" label={`Delete group ${g.name}`} loading={busyId === g.id} onClick={() => removeGroup(g)} />
+                </>
+              }
+            >
+              {choices.length === 0 ? (
+                <p className="rounded-xl border border-dashed border-line p-4 text-sm text-muted">
+                  No choices yet. Add at least two, e.g. “Ordinary” and “Reflective”.
+                </p>
+              ) : (
+                <div className="space-y-4 border-l-2 border-brand/30 pl-4">
+                  {choices.map((o) => {
+                    const lines = linesOf(o)
+                    return (
+                      <Section
+                        key={o.id}
+                        title={o.name}
+                        text={o.description || undefined}
+                        actions={
+                          <>
+                            <Button size="sm" variant="secondary" icon={Plus} disabled={!hasItems} onClick={() => setEditing({ line: null, optionId: o.id })}>
+                              Add line
+                            </Button>
+                            <IconButton icon={Pencil} tone="brand" label={`Edit choice ${o.name}`} onClick={() => setEditingOption({ option: o, groupId: g.id })} />
+                            <IconButton icon={Trash2} tone="danger" label={`Delete choice ${o.name}`} loading={busyId === o.id} onClick={() => removeOption(o)} />
+                          </>
+                        }
+                      >
+                        {lines.length === 0 ? (
+                          <p className="text-sm text-muted">No lines: choosing this adds nothing (fine for a “None” choice).</p>
+                        ) : (
+                          lineList(lines)
+                        )}
+                      </Section>
+                    )
+                  })}
+                </div>
+              )}
+            </Section>
+          )
+        })}
+
+        {addOns.map((o) => {
           const lines = linesOf(o)
+          const shrinks = o.width_reduction_mm > 0 || o.height_reduction_mm > 0
           return (
             <Section
               key={o.id}
@@ -234,13 +334,21 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
                   Optional add-on
                 </Badge>
               }
-              text={o.description || undefined}
+              text={
+                [
+                  o.description,
+                  shrinks &&
+                    `When ticked, the size typed is the wall opening and the window is measured ${o.width_reduction_mm} mm narrower and ${o.height_reduction_mm} mm shorter.`,
+                ]
+                  .filter(Boolean)
+                  .join(' ') || undefined
+              }
               actions={
                 <>
                   <Button size="sm" variant="secondary" icon={Plus} disabled={!hasItems} onClick={() => setEditing({ line: null, optionId: o.id })}>
                     Add line
                   </Button>
-                  <IconButton icon={Pencil} tone="brand" label={`Rename add-on ${o.name}`} onClick={() => setEditingOption(o)} />
+                  <IconButton icon={Pencil} tone="brand" label={`Edit add-on ${o.name}`} onClick={() => setEditingOption({ option: o, groupId: null })} />
                   <IconButton icon={Trash2} tone="danger" label={`Delete add-on ${o.name}`} loading={busyId === o.id} onClick={() => removeOption(o)} />
                 </>
               }
@@ -274,6 +382,15 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
         onClose={() => setEditingOption(null)}
         onSaved={() => {
           setEditingOption(null)
+          onChanged()
+        }}
+      />
+      <GroupModal
+        editing={editingGroup}
+        product={product}
+        onClose={() => setEditingGroup(null)}
+        onSaved={() => {
+          setEditingGroup(null)
           onChanged()
         }}
       />
@@ -322,25 +439,29 @@ function OptionModal({
   onClose: () => void
   onSaved: () => void
 }) {
-  const option = editing && editing !== 'new' ? editing : null
+  const option = editing?.option ?? null
+  const group = product.option_groups.find((g) => g.id === editing?.groupId)
+  const what = group ? 'choice' : 'add-on'
   return (
     <Modal
       open={editing !== null}
       onClose={onClose}
-      icon={option ? Pencil : PackagePlus}
-      title={option ? `Edit add-on “${option.name}”` : 'Add an add-on'}
+      icon={option ? Pencil : group ? Plus : PackagePlus}
+      title={option ? `Edit ${what} “${option.name}”` : group ? `Add a choice to “${group.name}”` : 'Add an add-on'}
       description={
         option
           ? `Part of ${product.name}.`
-          : `An optional extra for ${product.name}, e.g. “Open back aluminum”. After saving, add its lines (materials and labour).`
+          : group
+            ? `e.g. “Reflective”. After saving, add its lines (e.g. the reflective glass, measured by area).`
+            : `An optional extra for ${product.name}, e.g. “Open back (outer jamb)”. After saving, add its lines.`
       }
       footer={
         <>
           <Button variant="secondary" icon={X} onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" form="option-form" icon={option ? Save : PackagePlus}>
-            {option ? 'Save add-on' : 'Add add-on'}
+          <Button type="submit" form="option-form" icon={option ? Save : Plus}>
+            {option ? `Save ${what}` : `Add ${what}`}
           </Button>
         </>
       }
@@ -348,14 +469,16 @@ function OptionModal({
       {editing !== null && (
         <OptionFormBody
           option={option}
+          isChoice={!!group}
           onSubmit={async (values) => {
             const body = optionSchema.parse(values)
             if (option) {
               await adminApi.updateOption(product.id, option.id, body)
-              toast.success('Add-on saved.')
+              toast.success(`${group ? 'Choice' : 'Add-on'} saved.`)
             } else {
-              await adminApi.addOption(product.id, { ...body, sort_order: product.options.length })
-              toast.success(`Add-on “${body.name}” added. Now add its lines.`)
+              const siblings = product.options.filter((o) => o.group_id === (group?.id ?? null)).length
+              await adminApi.addOption(product.id, { ...body, group_id: group?.id ?? null, sort_order: siblings })
+              toast.success(`${group ? 'Choice' : 'Add-on'} “${body.name}” added. Now add its lines.`)
             }
             onSaved()
           }}
@@ -365,11 +488,24 @@ function OptionModal({
   )
 }
 
-function OptionFormBody({ option, onSubmit }: { option: ProductOption | null; onSubmit: (values: OptionForm) => Promise<void> }) {
+function OptionFormBody({
+  option,
+  isChoice,
+  onSubmit,
+}: {
+  option: ProductOption | null
+  isChoice: boolean
+  onSubmit: (values: OptionForm) => Promise<void>
+}) {
   const [error, setError] = useState<string | null>(null)
   const { register, handleSubmit, formState } = useForm<OptionForm>({
     resolver: zodResolver(optionSchema),
-    defaultValues: { name: option?.name ?? '', description: option?.description ?? '' },
+    defaultValues: {
+      name: option?.name ?? '',
+      description: option?.description ?? '',
+      width_reduction_mm: option?.width_reduction_mm ?? 0,
+      height_reduction_mm: option?.height_reduction_mm ?? 0,
+    },
   })
   const { errors, isSubmitting } = formState
 
@@ -388,12 +524,136 @@ function OptionFormBody({ option, onSubmit }: { option: ProductOption | null; on
       })}
     >
       <ErrorBanner message={error} />
-      <fieldset disabled={isSubmitting} className="space-y-4">
-        <Field label="Name" htmlFor="o-name" hint="Shown to customers next to a checkbox" error={errors.name?.message}>
-          <input id="o-name" data-autofocus placeholder="e.g. Open back aluminum" className={inputClass} aria-invalid={!!errors.name} {...register('name')} />
+      <fieldset disabled={isSubmitting} className="grid gap-4 sm:grid-cols-2">
+        <Field label="Name" htmlFor="o-name" required hint="Shown to customers when quoting" error={errors.name?.message} className="sm:col-span-2">
+          <input
+            id="o-name"
+            data-autofocus
+            placeholder={isChoice ? 'e.g. Reflective' : 'e.g. Open back (outer jamb)'}
+            className={inputClass}
+            aria-invalid={!!errors.name}
+            {...register('name')}
+          />
         </Field>
-        <Field label="Description (optional)" htmlFor="o-desc" hint="A short explanation for customers" error={errors.description?.message}>
-          <input id="o-desc" placeholder="e.g. Extra aluminium frame behind the window" className={inputClass} {...register('description')} />
+        <Field label="Description (optional)" htmlFor="o-desc" hint="A short explanation for customers" error={errors.description?.message} className="sm:col-span-2">
+          <input id="o-desc" className={inputClass} {...register('description')} />
+        </Field>
+        {!isChoice && (
+          <>
+            <p className="rounded-xl bg-surface-2 p-3 text-sm text-muted sm:col-span-2">
+              <strong className="text-ink">Frame around the window, like an open back?</strong> Then the size typed is the
+              wall opening: this add-on&apos;s lines use it as is, and the rest of the window is measured smaller by the
+              amounts below. Leave 0 for an add-on that doesn&apos;t change the size.
+            </p>
+            <Field label="Window narrower by (mm)" htmlFor="o-wr" required error={errors.width_reduction_mm?.message}>
+              <input
+                id="o-wr"
+                type="number"
+                min={0}
+                max={2000}
+                inputMode="numeric"
+                className={`${inputClass} tabular-nums`}
+                {...register('width_reduction_mm', { valueAsNumber: true })}
+              />
+            </Field>
+            <Field label="Window shorter by (mm)" htmlFor="o-hr" required error={errors.height_reduction_mm?.message}>
+              <input
+                id="o-hr"
+                type="number"
+                min={0}
+                max={2000}
+                inputMode="numeric"
+                className={`${inputClass} tabular-nums`}
+                {...register('height_reduction_mm', { valueAsNumber: true })}
+              />
+            </Field>
+          </>
+        )}
+      </fieldset>
+    </form>
+  )
+}
+
+function GroupModal({
+  editing,
+  product,
+  onClose,
+  onSaved,
+}: {
+  editing: GroupEditing
+  product: ProductDetail
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const group = editing && editing !== 'new' ? editing : null
+  return (
+    <Modal
+      open={editing !== null}
+      onClose={onClose}
+      icon={group ? Pencil : ListChecks}
+      title={group ? `Rename “${group.name}”` : 'Add a choice group'}
+      description={
+        group
+          ? `Part of ${product.name}.`
+          : `A question with one answer, e.g. “Glass type”. After saving, add its choices (e.g. Ordinary, Reflective).`
+      }
+      footer={
+        <>
+          <Button variant="secondary" icon={X} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" form="group-form" icon={group ? Save : Plus}>
+            {group ? 'Save group' : 'Add group'}
+          </Button>
+        </>
+      }
+    >
+      {editing !== null && (
+        <GroupFormBody
+          group={group}
+          onSubmit={async (values) => {
+            const body = optionGroupSchema.parse(values)
+            if (group) {
+              await adminApi.updateOptionGroup(product.id, group.id, body)
+              toast.success('Group saved.')
+            } else {
+              await adminApi.addOptionGroup(product.id, { ...body, sort_order: product.option_groups.length })
+              toast.success(`Group “${body.name}” added. Now add its choices.`)
+            }
+            onSaved()
+          }}
+        />
+      )}
+    </Modal>
+  )
+}
+
+function GroupFormBody({ group, onSubmit }: { group: ProductOptionGroup | null; onSubmit: (values: OptionGroupForm) => Promise<void> }) {
+  const [error, setError] = useState<string | null>(null)
+  const { register, handleSubmit, formState } = useForm<OptionGroupForm>({
+    resolver: zodResolver(optionGroupSchema),
+    defaultValues: { name: group?.name ?? '' },
+  })
+  const { errors, isSubmitting } = formState
+
+  return (
+    <form
+      id="group-form"
+      noValidate
+      className="space-y-4"
+      onSubmit={handleSubmit(async (values) => {
+        setError(null)
+        try {
+          await onSubmit(values)
+        } catch (err) {
+          setError(messageOf(err))
+        }
+      })}
+    >
+      <ErrorBanner message={error} />
+      <fieldset disabled={isSubmitting}>
+        <Field label="Question" htmlFor="g-name" required hint="Shown to customers above the choices" error={errors.name?.message}>
+          <input id="g-name" data-autofocus placeholder="e.g. Glass type" className={inputClass} aria-invalid={!!errors.name} {...register('name')} />
         </Field>
       </fieldset>
     </form>
@@ -432,6 +692,7 @@ function LineModal({
         <LineForm
           line={line}
           optionId={editing.optionId}
+          groups={product.option_groups}
           options={product.options}
           materials={materials}
           laborRates={laborRates}
@@ -466,6 +727,7 @@ function LineModal({
 function LineForm({
   line,
   optionId,
+  groups,
   options,
   materials,
   laborRates,
@@ -474,6 +736,7 @@ function LineForm({
   line: Component | null
   /** '' = always included */
   optionId: string
+  groups: ProductOptionGroup[]
   options: ProductOption[]
   materials: Material[]
   laborRates: LaborRate[]
@@ -525,7 +788,7 @@ function LineForm({
     >
       <ErrorBanner message={error} />
       <fieldset disabled={isSubmitting} className="grid gap-4 sm:grid-cols-2">
-        <Field label="Material or labour" htmlFor="c-item" error={errors.item?.message} className="sm:col-span-2">
+        <Field label="Material or labour" htmlFor="c-item" required error={errors.item?.message} className="sm:col-span-2">
           <select id="c-item" className={inputClass} disabled={!!line} aria-invalid={!!errors.item} {...itemField}>
             <option value="">Choose…</option>
             <optgroup label="Materials">
@@ -549,20 +812,38 @@ function LineForm({
           </select>
         </Field>
         {options.length > 0 && (
-          <Field label="Part of" htmlFor="c-option" hint="Add-on lines are only priced when the add-on is ticked" className="sm:col-span-2">
+          <Field label="Part of" htmlFor="c-option" required hint="Choice and add-on lines are only priced when chosen" className="sm:col-span-2">
             <select id="c-option" className={inputClass} {...register('option_id')}>
               <option value="">Always included</option>
-              {options.map((o) => (
-                <option key={o.id} value={o.id}>
-                  Add-on: {o.name}
-                </option>
+              {groups.map((g) => (
+                <optgroup key={g.id} label={g.name}>
+                  {options
+                    .filter((o) => o.group_id === g.id)
+                    .map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {g.name}: {o.name}
+                      </option>
+                    ))}
+                </optgroup>
               ))}
+              {options.some((o) => o.group_id === null) && (
+                <optgroup label="Add-ons">
+                  {options
+                    .filter((o) => o.group_id === null)
+                    .map((o) => (
+                      <option key={o.id} value={o.id}>
+                        Add-on: {o.name}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
             </select>
           </Field>
         )}
         <Field
           label="Measured by"
           htmlFor="c-basis"
+          required
           hint={selectedUnit ? undefined : 'Choose a material or labour first'}
           error={errors.basis?.message}
           className="sm:col-span-2"
@@ -575,10 +856,10 @@ function LineForm({
             ))}
           </select>
         </Field>
-        <Field label="Factor" htmlFor="c-factor" hint="How many (e.g. 2 tracks)" error={errors.factor?.message}>
+        <Field label="Factor" htmlFor="c-factor" required hint="How many (e.g. 2 tracks)" error={errors.factor?.message}>
           <input id="c-factor" data-autofocus={line ? true : undefined} inputMode="decimal" className={`${inputClass} tabular-nums`} {...register('factor')} />
         </Field>
-        <Field label="Waste (%)" htmlFor="c-waste" hint="Extra for cutting loss" error={errors.waste_percent?.message}>
+        <Field label="Waste (%)" htmlFor="c-waste" required hint="Extra for cutting loss" error={errors.waste_percent?.message}>
           <input id="c-waste" inputMode="decimal" className={`${inputClass} tabular-nums`} {...register('waste_percent')} />
         </Field>
         <Field

@@ -7,7 +7,7 @@ import { useRevalidator, useRouteLoaderData } from 'react-router'
 import { adminApi, type PricingSettings } from '../../api/admin'
 import { Button } from '../../components/ui/Button'
 import { Card, ErrorBanner, PageHeader } from '../../components/ui/Card'
-import { Field, inputClass } from '../../components/ui/Field'
+import { Field, inputClass, RequiredNote } from '../../components/ui/Field'
 import { messageOf } from '../../lib/errors'
 import { toast } from '../../stores/feedback'
 import { settingsSchema, type SettingsForm } from './schemas'
@@ -59,19 +59,20 @@ export function PricingSettingsPage() {
       />
       <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6 pb-24">
         <ErrorBanner message={error} />
+        <RequiredNote />
         <fieldset disabled={isSubmitting} className="grid gap-6 lg:grid-cols-2">
           <Card title="Pricing" icon={Percent}>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Markup (%)" htmlFor="markup" hint="Added to the cost of every piece" error={errors.markup_percent?.message}>
+              <Field label="Markup (%)" htmlFor="markup" required hint="Added to the cost of every piece" error={errors.markup_percent?.message}>
                 <input id="markup" inputMode="decimal" className={`${inputClass} tabular-nums`} {...register('markup_percent')} />
               </Field>
-              <Field label="VAT (%)" htmlFor="vat" hint="Applied on top of the subtotal" error={errors.vat_percent?.message}>
+              <Field label="VAT (%)" htmlFor="vat" required hint="Applied on top of the subtotal" error={errors.vat_percent?.message}>
                 <input id="vat" inputMode="decimal" className={`${inputClass} tabular-nums`} {...register('vat_percent')} />
               </Field>
-              <Field label="Currency" htmlFor="currency" error={errors.currency?.message}>
+              <Field label="Currency" htmlFor="currency" required error={errors.currency?.message}>
                 <input id="currency" className={`${inputClass} uppercase`} maxLength={3} {...register('currency')} />
               </Field>
-              <Field label="Quotation valid for (days)" htmlFor="validity" error={errors.quote_validity_days?.message}>
+              <Field label="Quotation valid for (days)" htmlFor="validity" required error={errors.quote_validity_days?.message}>
                 <input
                   id="validity"
                   type="number"
@@ -84,6 +85,7 @@ export function PricingSettingsPage() {
               <Field
                 label="Round totals up to the next"
                 htmlFor="rounding"
+                required
                 hint="e.g. 100 turns 21,423 into 21,500 · 0 = no rounding"
                 error={errors.rounding_step?.message}
               >
@@ -93,7 +95,7 @@ export function PricingSettingsPage() {
           </Card>
           <Card title="Business details on PDFs" icon={Building2}>
             <div className="space-y-4">
-              <Field label="Business name" htmlFor="b-name" error={errors.business_name?.message}>
+              <Field label="Business name" htmlFor="b-name" required error={errors.business_name?.message}>
                 <input id="b-name" className={inputClass} {...register('business_name')} />
               </Field>
               <Field label="Address" htmlFor="b-address" error={errors.business_address?.message}>

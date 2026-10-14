@@ -16,7 +16,14 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
   const [result, setResult] = useState<PricePreview | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [optionIds, setOptionIds] = useState<string[]>([])
+  const [picks, setPicks] = useState<Record<string, string>>({})
   const toggle = (id: string) => setOptionIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]))
+  const addOns = product.options.filter((o) => o.group_id === null)
+  const groups = product.option_groups
+    .map((g) => ({ ...g, choices: product.options.filter((o) => o.group_id === g.id) }))
+    .filter((g) => g.choices.length > 0)
+  // The picked choice of a group, or its first one (like the quotation form).
+  const pickOf = (g: (typeof groups)[number]) => g.choices.find((c) => c.id === picks[g.id])?.id ?? g.choices[0].id
   const { register, handleSubmit, formState } = useForm<PreviewForm>({
     resolver: zodResolver(previewSchema),
     defaultValues: { width: '120', height: '100', unit: 'cm', quantity: 1 },
@@ -26,8 +33,8 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
   async function onSubmit(values: PreviewForm) {
     setError(null)
     try {
-      // Drop add-ons deleted since they were ticked.
-      const option_ids = optionIds.filter((id) => product.options.some((o) => o.id === id))
+      // One choice per group, plus the ticked add-ons that still exist.
+      const option_ids = [...groups.map(pickOf), ...optionIds.filter((id) => addOns.some((o) => o.id === id))]
       setResult(await adminApi.pricePreview(product.id, { ...previewSchema.parse(values), option_ids }))
     } catch (err) {
       setResult(null)
@@ -43,19 +50,19 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
         Try sample sizes to check the template. Uses current prices and settings; nothing is saved.
       </p>
       <form onSubmit={handleSubmit(onSubmit)} noValidate className="grid grid-cols-2 items-end gap-3 sm:grid-cols-5">
-        <Field label="Width" htmlFor="pv-width" error={errors.width?.message}>
+        <Field label="Width" htmlFor="pv-width" required error={errors.width?.message}>
           <input id="pv-width" inputMode="decimal" className={`${inputClass} tabular-nums`} {...register('width')} />
         </Field>
-        <Field label="Height" htmlFor="pv-height" error={errors.height?.message}>
+        <Field label="Height" htmlFor="pv-height" required error={errors.height?.message}>
           <input id="pv-height" inputMode="decimal" className={`${inputClass} tabular-nums`} {...register('height')} />
         </Field>
-        <Field label="Unit" htmlFor="pv-unit">
+        <Field label="Unit" htmlFor="pv-unit" required>
           <select id="pv-unit" className={inputClass} {...register('unit')}>
             <option value="cm">cm</option>
             <option value="in">inch</option>
           </select>
         </Field>
-        <Field label="Qty" htmlFor="pv-qty" error={errors.quantity?.message}>
+        <Field label="Qty" htmlFor="pv-qty" required error={errors.quantity?.message}>
           <input
             id="pv-qty"
             type="number"
@@ -69,11 +76,31 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
           Calculate
         </Button>
       </form>
-      {product.options.length > 0 && (
+      {groups.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+          {groups.map((g) => (
+            <label key={g.id} className="inline-flex items-center gap-2">
+              <span className="text-muted">{g.name}:</span>
+              <select
+                className={`${inputClass} w-auto py-1.5 sm:py-1.5`}
+                value={pickOf(g)}
+                onChange={(e) => setPicks((p) => ({ ...p, [g.id]: e.target.value }))}
+              >
+                {g.choices.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+      )}
+      {addOns.length > 0 && (
         <fieldset className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
           <legend className="sr-only">Add-ons to include</legend>
           <span className="text-muted">Include add-ons:</span>
-          {product.options.map((o) => (
+          {addOns.map((o) => (
             <label key={o.id} className="inline-flex cursor-pointer items-center gap-2">
               <input type="checkbox" className="size-4 accent-brand" checked={optionIds.includes(o.id)} onChange={() => toggle(o.id)} />
               {o.name}
@@ -116,7 +143,14 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
                           </Badge>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-muted">{BASIS_LABEL[l.basis]}</td>
+                      <td className="px-3 py-2 text-muted">
+                        {BASIS_LABEL[l.basis]}
+                        {l.width_mm !== null && (l.width_mm !== result.width_mm || l.height_mm !== result.height_mm) && (
+                          <span className="block text-xs">
+                            at {l.width_mm} × {l.height_mm} mm
+                          </span>
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-right">{trimDecimal(l.quantity)}</td>
                       <td className="px-3 py-2 text-right whitespace-nowrap">
                         {money(l.unit_price)} <span className="text-muted">{UNIT_LABEL[l.unit]}</span>

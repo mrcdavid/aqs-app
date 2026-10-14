@@ -340,19 +340,19 @@ function StaffFormBody({ onCreated }: { onCreated: (email: string) => void }) {
     >
       <ErrorBanner message={error} />
       <fieldset disabled={isSubmitting} className="grid gap-4 sm:grid-cols-2">
-        <Field label="Email" htmlFor="s-email" error={errors.email?.message}>
+        <Field label="Email" htmlFor="s-email" required error={errors.email?.message}>
           <input id="s-email" type="email" autoFocus autoComplete="off" className={inputClass} aria-invalid={!!errors.email} {...register('email')} />
         </Field>
-        <Field label="Role" htmlFor="s-role">
+        <Field label="Role" htmlFor="s-role" required>
           <select id="s-role" className={inputClass} {...register('role')}>
             <option value="admin">Admin</option>
             <option value="super_admin">Super admin</option>
           </select>
         </Field>
-        <Field label="Password" htmlFor="s-pw" hint="12+ characters, not a common password" error={errors.password?.message}>
+        <Field label="Password" htmlFor="s-pw" required hint="12+ characters, not a common password" error={errors.password?.message}>
           <input id="s-pw" type="password" autoComplete="new-password" className={inputClass} aria-invalid={!!errors.password} {...register('password')} />
         </Field>
-        <Field label="Repeat password" htmlFor="s-pw2" error={errors.confirm?.message}>
+        <Field label="Repeat password" htmlFor="s-pw2" required error={errors.confirm?.message}>
           <input id="s-pw2" type="password" autoComplete="new-password" className={inputClass} aria-invalid={!!errors.confirm} {...register('confirm')} />
         </Field>
       </fieldset>
@@ -409,10 +409,10 @@ function ResetFormBody({ user, onDone }: { user: UserRow; onDone: (email: string
     >
       <ErrorBanner message={error} />
       <fieldset disabled={isSubmitting} className="grid gap-4 sm:grid-cols-2">
-        <Field label="New password" htmlFor="r-pw" hint="12+ characters" error={errors.password?.message}>
+        <Field label="New password" htmlFor="r-pw" required hint="12+ characters" error={errors.password?.message}>
           <input id="r-pw" type="password" autoFocus autoComplete="new-password" className={inputClass} aria-invalid={!!errors.password} {...register('password')} />
         </Field>
-        <Field label="Repeat password" htmlFor="r-pw2" error={errors.confirm?.message}>
+        <Field label="Repeat password" htmlFor="r-pw2" required error={errors.confirm?.message}>
           <input id="r-pw2" type="password" autoComplete="new-password" className={inputClass} aria-invalid={!!errors.confirm} {...register('confirm')} />
         </Field>
       </fieldset>

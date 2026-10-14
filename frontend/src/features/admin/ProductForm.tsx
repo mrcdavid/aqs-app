@@ -95,10 +95,10 @@ function ProductFields({ initial, onSubmit }: { initial: ProductFormValues; onSu
       <ErrorBanner message={error} />
       <fieldset disabled={isSubmitting} className="space-y-5">
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Code" htmlFor="p-code" error={errors.code?.message} hint="e.g. SW-2PANEL">
+          <Field label="Code" htmlFor="p-code" required error={errors.code?.message} hint="e.g. SW-2PANEL">
             <input id="p-code" autoFocus className={`${inputClass} font-mono uppercase`} aria-invalid={!!errors.code} {...register('code')} />
           </Field>
-          <Field label="Category" htmlFor="p-category">
+          <Field label="Category" htmlFor="p-category" required>
             <select id="p-category" className={inputClass} {...register('category')}>
               {Object.entries(PRODUCT_CATEGORY_LABEL).map(([value, label]) => (
                 <option key={value} value={value}>
@@ -107,7 +107,7 @@ function ProductFields({ initial, onSubmit }: { initial: ProductFormValues; onSu
               ))}
             </select>
           </Field>
-          <Field label="Name" htmlFor="p-name" error={errors.name?.message} className="sm:col-span-2">
+          <Field label="Name" htmlFor="p-name" required error={errors.name?.message} className="sm:col-span-2">
             <input id="p-name" className={inputClass} aria-invalid={!!errors.name} {...register('name')} />
           </Field>
           <Field
@@ -123,7 +123,7 @@ function ProductFields({ initial, onSubmit }: { initial: ProductFormValues; onSu
           <SectionLabel>Allowed size (millimetres)</SectionLabel>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             {SIZE_FIELDS.map(([name, label]) => (
-              <Field key={name} label={label} htmlFor={`p-${name}`} error={errors[name]?.message}>
+              <Field key={name} label={label} htmlFor={`p-${name}`} required error={errors[name]?.message}>
                 <input
                   id={`p-${name}`}
                   type="number"

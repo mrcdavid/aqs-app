@@ -80,12 +80,23 @@ export const componentSchema = z.object({
 })
 export type ComponentForm = z.input<typeof componentSchema>
 
-/** An optional add-on of a product. Mirrors OptionIn in backend/app/schemas/catalog.py. */
+const reduction = z.number({ error: 'Enter a number (0 for none)' }).int().min(0).max(2000, 'At most 2000 mm')
+
+/** An add-on or a choice of a group. Mirrors OptionIn in backend/app/schemas/catalog.py. */
 export const optionSchema = z.object({
   name: z.string().trim().min(2, 'At least 2 characters').max(80),
   description: z.string().trim().max(300),
+  /** Add-ons only (e.g. open back): how much smaller the rest of the window is measured. */
+  width_reduction_mm: reduction,
+  height_reduction_mm: reduction,
 })
 export type OptionForm = z.input<typeof optionSchema>
+
+/** A choose-one group, e.g. Glass type. Mirrors OptionGroupIn. */
+export const optionGroupSchema = z.object({
+  name: z.string().trim().min(2, 'At least 2 characters').max(80),
+})
+export type OptionGroupForm = z.input<typeof optionGroupSchema>
 
 export const previewSchema = z.object({
   width: z.string().trim().regex(/^\d{1,5}(\.\d{1,2})?$/, 'Enter a size'),

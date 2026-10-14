@@ -348,14 +348,14 @@ function ItemForm({
     >
       <ErrorBanner message={error} />
       <fieldset disabled={isSubmitting} className="grid gap-4 sm:grid-cols-2">
-        <Field label="Code" htmlFor="ci-code" error={errors.code?.message} hint={codeHint}>
+        <Field label="Code" htmlFor="ci-code" required error={errors.code?.message} hint={codeHint}>
           <input id="ci-code" autoFocus className={`${inputClass} font-mono uppercase`} aria-invalid={!!errors.code} {...register('code')} />
         </Field>
-        <Field label="Name" htmlFor="ci-name" error={errors.name?.message}>
+        <Field label="Name" htmlFor="ci-name" required error={errors.name?.message}>
           <input id="ci-name" className={inputClass} aria-invalid={!!errors.name} {...register('name')} />
         </Field>
         {withCategory && (
-          <Field label="Category" htmlFor="ci-category">
+          <Field label="Category" htmlFor="ci-category" required>
             <select id="ci-category" className={inputClass} {...register('category')}>
               {Object.entries(MATERIAL_CATEGORY_LABEL).map(([value, label]) => (
                 <option key={value} value={value}>
@@ -365,7 +365,7 @@ function ItemForm({
             </select>
           </Field>
         )}
-        <Field label="Priced" htmlFor="ci-unit" hint="Decides how templates measure it">
+        <Field label="Priced" htmlFor="ci-unit" required hint="Decides how templates measure it">
           <select id="ci-unit" className={inputClass} {...register('unit')}>
             {Object.entries(UNIT_LABEL).map(([value, label]) => (
               <option key={value} value={value}>
@@ -374,7 +374,7 @@ function ItemForm({
             ))}
           </select>
         </Field>
-        <Field label={`Price (${currency})`} htmlFor="ci-price" error={errors.price?.message} className={withCategory ? '' : 'sm:col-span-2'}>
+        <Field label={`Price (${currency})`} htmlFor="ci-price" required error={errors.price?.message} className={withCategory ? '' : 'sm:col-span-2'}>
           <input id="ci-price" inputMode="decimal" placeholder="e.g. 850.00" className={`${inputClass} tabular-nums`} aria-invalid={!!errors.price} {...register('price')} />
         </Field>
       </fieldset>
