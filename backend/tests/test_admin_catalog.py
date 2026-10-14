@@ -432,3 +432,10 @@ async def test_price_preview_with_add_on(admin: AsyncClient):
     ).status_code == 422
     dup = {**size, "option_ids": [option["id"], option["id"]]}
     assert (await admin.post(url, json=dup)).status_code == 422
+
+
+@pytest.mark.parametrize(("owner", "ok"), [("", True), ("Cleo David", True), ("Cleo 123", False)])
+async def test_owner_name_must_be_letters(admin: AsyncClient, owner: str, ok: bool):
+    body = {"markup_percent": "0", "vat_percent": "12", "currency": "PHP", **BUSINESS}
+    r = await admin.put(f"{API}/pricing-settings", json={**body, "owner_name": owner})
+    assert r.status_code == (200 if ok else 422)

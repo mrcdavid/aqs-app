@@ -226,8 +226,14 @@ async def test_profile_setup_flow(
     "bad",
     [
         {"contact_number": "12345"},
+        {"contact_number": "0917123456"},  # one digit short
+        {"contact_number": "+1 415 555 0100"},  # not a PH number
+        {"contact_number": "(02) 8123 4567"},  # landline, not a mobile
         {"age": 12},
         {"full_name": ""},
+        {"full_name": "Juan 2"},  # digits in a name
+        {"city": "Quezon City 1"},
+        {"province": "<script>"},
         {"is_admin": True},  # unknown fields are rejected
     ],
 )
@@ -263,3 +269,27 @@ async def test_audit_log_is_written_and_append_only(client: AsyncClient, db: Asy
     with pytest.raises(DBAPIError, match="append-only"):
         await db.execute(text("DELETE FROM audit_log"))
     await db.rollback()
+
+
+@pytest.mark.parametrize(
+    ("typed", "stored"),
+    [
+        ("0917 123 4567", "09171234567"),
+        ("0917-123-4567", "09171234567"),
+        ("+63 917 123 4567", "+639171234567"),
+        ("(+63) 917.123.4567", "+639171234567"),
+    ],
+)
+async def test_profile_mobile_number_is_cleaned_up(
+    client: AsyncClient, db: AsyncSession, monkeypatch: pytest.MonkeyPatch, typed: str, stored: str
+):
+    """People type spaces and dashes; we keep only the digits (and the leading +)."""
+    fake_google(monkeypatch)
+    await client.get("/api/v1/auth/google/callback")
+    names = {"full_name": "Ma. Cristina O'Neil-Reyes", "city": "Science City of Muñoz"}
+    r = await client.put(
+        "/api/v1/profile", json={**VALID_PROFILE, **names, "contact_number": typed}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["contact_number"] == stored
+    assert r.json()["full_name"] == "Ma. Cristina O'Neil-Reyes"

@@ -268,7 +268,8 @@ async def test_reject_requires_note_and_customer_sees_it(
 async def test_pdf_escapes_user_text(
     client: AsyncClient, product_id: str, monkeypatch: pytest.MonkeyPatch
 ):
-    tricky = {**VALID_PROFILE, "full_name": "<b>O'Brien & Sons</b> <para>", "city": "A & B <x>"}
+    # Names and places only allow letters now; the street address is still free text.
+    tricky = {**VALID_PROFILE, "address_line": "<b>12 O'Brien & Sons</b> <para>"}
     await sign_in_customer(client, monkeypatch, profile=tricky)
     q = await request_quote(client, product_id)
     r = await client.get(f"{API}/quotations/{q['id']}/pdf")
@@ -350,7 +351,7 @@ async def test_adjusted_total_validation(
 
 CLIENT = {
     "full_name": "Maria Santos",
-    "contact_number": "(02) 8123 4567",
+    "contact_number": "0917 123 4567",
     "address_line": "12 Mabini St., Brgy. Malinis",
     "city": "Pasig",
     "province": "Metro Manila",
@@ -371,6 +372,7 @@ async def test_staff_quotes_walk_in_client(admin: AsyncClient, product_id: str, 
     q = await staff_quote(admin, product_id)
     assert q["status"] == "pending" and q["walk_in"] is True
     assert q["customer"]["full_name"] == "Maria Santos" and q["customer"]["email"] == ""
+    assert q["customer"]["contact_number"] == "09171234567"  # spaces removed
     assert q["created_by_email"] == STAFF_EMAIL
     assert q["total"] == "12000.00" and q["breakdown"]["total"] == "11977.19"
 
@@ -393,13 +395,27 @@ async def test_staff_quotes_walk_in_client(admin: AsyncClient, product_id: str, 
 async def test_walk_in_email_is_optional_but_checked(admin: AsyncClient, product_id: str):
     q = await staff_quote(admin, product_id, email="maria@example.com")
     assert q["customer"]["email"] == "maria@example.com"
-    body = {"product_id": product_id, **REQUEST, "client": {**CLIENT, "email": "not-an-email"}}
-    assert (await admin.post(f"{API}/admin/quotations", json=body)).status_code == 422
+    assert (await staff_quote(admin, product_id, email=""))["customer"][
+        "email"
+    ] == ""  # blank = none
+    for bad in ("not-an-email", "maria@", "maria@example"):
+        body = {"product_id": product_id, **REQUEST, "client": {**CLIENT, "email": bad}}
+        assert (await admin.post(f"{API}/admin/quotations", json=body)).status_code == 422
 
 
 @pytest.mark.parametrize(
     "bad",
-    [{"contact_number": "call me"}, {"city": ""}, {"full_name": "M"}, {"age": 30}],
+    [
+        {"contact_number": "call me"},
+        {"contact_number": "(02) 8123 4567"},  # landline: a PH mobile number is required
+        {"contact_number": "+1 415 555 0100"},  # foreign number
+        {"city": ""},
+        {"city": "Pasig 2"},
+        {"province": "Metro Manila!"},
+        {"full_name": "M"},
+        {"full_name": "Maria 123"},
+        {"age": 30},  # unknown field
+    ],
 )
 async def test_walk_in_client_validation(admin: AsyncClient, product_id: str, bad: dict[str, Any]):
     body = {"product_id": product_id, **REQUEST, "client": {**CLIENT, **bad}}
