@@ -153,26 +153,53 @@ class ProductOut(_Out):
     updated_at: datetime
 
 
-# ---------- add-ons (optional parts of a product template) ----------
+# ---------- options: add-ons and choose-one groups (e.g. Glass type) ----------
+
+# How much smaller the rest of the window is measured when an option is chosen (e.g. open back).
+Reduction = Annotated[int, Field(ge=0, le=2000)]
+
+
+class OptionGroupIn(_In):
+    name: str = Field(min_length=2, max_length=80)
+    sort_order: int = Field(default=0, ge=0, le=1000)
+
+
+class OptionGroupUpdate(_In):
+    name: str | None = Field(default=None, min_length=2, max_length=80)
+    sort_order: int | None = Field(default=None, ge=0, le=1000)
+
+
+class OptionGroupOut(_Out):
+    id: uuid.UUID
+    name: str
+    sort_order: int
 
 
 class OptionIn(_In):
+    group_id: uuid.UUID | None = None  # None = add-on; else a choice of that group
     name: str = Field(min_length=2, max_length=80)
     description: str = Field(default="", max_length=300)
     sort_order: int = Field(default=0, ge=0, le=1000)
+    width_reduction_mm: Reduction = 0
+    height_reduction_mm: Reduction = 0
 
 
 class OptionUpdate(_In):
     name: str | None = Field(default=None, min_length=2, max_length=80)
     description: str | None = Field(default=None, max_length=300)
     sort_order: int | None = Field(default=None, ge=0, le=1000)
+    width_reduction_mm: Reduction | None = None
+    height_reduction_mm: Reduction | None = None
 
 
 class OptionOut(_Out):
     id: uuid.UUID
+    group_id: uuid.UUID | None
     name: str
     description: str
     sort_order: int
+    width_reduction_mm: int
+    height_reduction_mm: int
 
 
 class ComponentIn(_In):
@@ -221,6 +248,7 @@ class ComponentOut(BaseModel):
 
 
 class ProductDetailOut(ProductOut):
+    option_groups: list[OptionGroupOut]
     options: list[OptionOut]
     components: list[ComponentOut]
 
@@ -277,6 +305,8 @@ class PriceLineOut(BaseModel):
     quantity: Decimal
     cost: Decimal
     option: str = ""  # add-on name; "" = always included (and in snapshots before add-ons)
+    width_mm: int | None = None  # size this line was measured at (None in older snapshots)
+    height_mm: int | None = None
 
 
 class PricePreviewOut(BaseModel):

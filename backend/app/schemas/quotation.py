@@ -23,6 +23,14 @@ class CatalogOptionOut(BaseModel):
     description: str
 
 
+class CatalogChoiceGroupOut(BaseModel):
+    """A choose-one question, e.g. Glass type, with the choices that can be picked."""
+
+    id: uuid.UUID
+    name: str
+    choices: list[CatalogOptionOut]
+
+
 class CatalogProductOut(BaseModel):
     """What customers (and staff quoting walk-ins) see in the product picker."""
 
@@ -37,7 +45,8 @@ class CatalogProductOut(BaseModel):
     max_width_mm: int
     min_height_mm: int
     max_height_mm: int
-    options: list[CatalogOptionOut] = []
+    choice_groups: list[CatalogChoiceGroupOut] = []  # pick exactly one in each
+    options: list[CatalogOptionOut] = []  # add-ons, tick any
 
 
 class QuotationIn(BaseModel):
@@ -106,6 +115,11 @@ class AdminQuotationSummaryOut(QuotationSummaryOut):
     customer_province: str
 
 
+class ChoiceOut(BaseModel):
+    group: str
+    name: str
+
+
 class QuotationOut(BaseModel):
     """Customer view: one amount (VAT included) and the payment split. Never costs, markup,
     VAT or unit prices: what isn't sent can't be read in the browser either."""
@@ -116,6 +130,7 @@ class QuotationOut(BaseModel):
     product_name: str
     product_description: str
     includes: list[str]
+    choices: list[ChoiceOut]  # e.g. [{group: "Glass type", name: "Reflective"}]
     options: list[str]  # chosen add-ons, e.g. ["Open back aluminum"]
     input_width: Decimal
     input_height: Decimal
