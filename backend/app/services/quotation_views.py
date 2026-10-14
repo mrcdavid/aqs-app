@@ -78,6 +78,7 @@ def customer_view(q: Quotation) -> QuotationOut:
         review_note=q.review_note,
         valid_until=q.valid_until,
         can_cancel=q.status == QuotationStatus.PENDING,
+        cancelled_by_staff=q.status == QuotationStatus.CANCELLED and q.reviewed_by is not None,
     )
 
 
