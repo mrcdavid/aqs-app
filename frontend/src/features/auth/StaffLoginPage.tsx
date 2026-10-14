@@ -55,7 +55,7 @@ export function StaffLoginPage() {
     >
       <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
         <ErrorBanner message={serverError} />
-        <Field label="Email" htmlFor="email" error={errors.email?.message}>
+        <Field label="Email" htmlFor="email" required error={errors.email?.message}>
           <div className="relative">
             <Mail className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" aria-hidden />
             <input
@@ -69,7 +69,7 @@ export function StaffLoginPage() {
             />
           </div>
         </Field>
-        <Field label="Password" htmlFor="password" error={errors.password?.message}>
+        <Field label="Password" htmlFor="password" required error={errors.password?.message}>
           <div className="relative">
             <Lock className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" aria-hidden />
             <input
