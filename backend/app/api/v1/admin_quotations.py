@@ -1,4 +1,5 @@
-"""Admin side: quote walk-in clients, review requests, approve (number + final PDF) or reject."""
+"""Admin side: quote walk-in clients, review requests: approve (number + final PDF), reject or
+cancel. Customers can also cancel their own pending requests (see quotations.py)."""
 
 import uuid
 from datetime import timedelta
@@ -14,6 +15,7 @@ from app.models import Product, Quotation, QuotationStatus, User
 from app.schemas.quotation import (
     AdminQuotationOut,
     AdminQuotationSummaryOut,
+    CancelIn,
     RejectIn,
     ReviewIn,
     StaffQuotationIn,
@@ -205,6 +207,31 @@ async def reject_quotation(
         actor_id=user.id,
         entity="quotation",
         entity_id=q.id,
+    )
+    await db.commit()
+    await db.refresh(q)
+    return await _view(db, q)
+
+
+@router.post("/{quotation_id}/cancel")
+async def cancel_quotation(
+    quotation_id: uuid.UUID, body: CancelIn, user: StaffUser, db: DB, request: Request
+) -> AdminQuotationOut:
+    """Withdraw a pending request (e.g. the client changed their mind). Not shown as rejected."""
+    q = await _get(db, quotation_id, lock=True)
+    _ensure_pending(q)
+    q.status = QuotationStatus.CANCELLED
+    q.reviewed_by = user.id
+    q.reviewed_at = utcnow()
+    q.review_note = body.note or None
+    audit.record(
+        db,
+        "quotation.cancelled",
+        request=request,
+        actor_id=user.id,
+        entity="quotation",
+        entity_id=q.id,
+        details={"by": "staff"},
     )
     await db.commit()
     await db.refresh(q)

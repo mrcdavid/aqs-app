@@ -186,6 +186,7 @@ async def cancel_quotation(
         actor_id=user.id,
         entity="quotation",
         entity_id=q.id,
+        details={"by": "customer"},
     )
     await db.commit()
     await db.refresh(q)
