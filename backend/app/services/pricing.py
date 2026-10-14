@@ -8,6 +8,8 @@
     markup        = net - subtotal                 vat    = net * vat%
     total         = net + vat
     rounded_total = total rounded UP to the next multiple of rounding_step (0 = no rounding)
+A line can be measured smaller than the size typed (e.g. the window inside an open back frame):
+its width/height_reduction_mm are taken off before its basis value is worked out.
 All money is rounded half-up to centavos at each step shown above. Markup is applied per piece
 so the customer's unit price x quantity always equals the amount shown. The rounded total is what
 the customer is quoted; rounding is always up, in the shop's favour.
@@ -71,7 +73,9 @@ class ComponentInput:
     unit_price: Decimal
     factor: Decimal
     waste_percent: Decimal
-    option: str = ""  # add-on name; "" = always included
+    option: str = ""  # add-on or choice name; "" = always included
+    width_reduction_mm: int = 0  # measure this line narrower than the size typed
+    height_reduction_mm: int = 0
 
 
 @dataclass(frozen=True)
@@ -86,6 +90,8 @@ class PriceLine:
     quantity: Decimal
     cost: Decimal
     option: str = ""
+    width_mm: int = 0  # the size this line was measured at
+    height_mm: int = 0
 
 
 @dataclass(frozen=True)
@@ -130,9 +136,12 @@ def compute_price(
 
     lines: list[PriceLine] = []
     for c in components:
-        qty = (
-            basis_value(c.basis, width_mm, height_mm) * c.factor * (1 + c.waste_percent / 100)
-        ).quantize(QTY, rounding=ROUND_HALF_UP)
+        w, h = width_mm - c.width_reduction_mm, height_mm - c.height_reduction_mm
+        if w <= 0 or h <= 0:
+            raise ValueError("The size is too small for the chosen options")
+        qty = (basis_value(c.basis, w, h) * c.factor * (1 + c.waste_percent / 100)).quantize(
+            QTY, rounding=ROUND_HALF_UP
+        )
         lines.append(
             PriceLine(
                 kind=c.kind,
@@ -145,6 +154,8 @@ def compute_price(
                 quantity=qty,
                 cost=money(qty * c.unit_price),
                 option=c.option,
+                width_mm=w,
+                height_mm=h,
             )
         )
 

@@ -3,7 +3,6 @@
 import logging
 import os
 import uuid
-from collections import defaultdict
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -23,12 +22,20 @@ from app.models import (
     PricingSettings,
     Product,
     ProductComponent,
-    ProductOption,
     Profile,
     QuoteCounter,
     User,
 )
-from app.services.catalog import load_components, load_options, to_component_input
+from app.services.catalog import load_components, load_options
+from app.services.options import (
+    OPTION_NOT_AVAILABLE,
+    Offer,
+    Picked,
+    load_groups,
+    offer,
+    pick,
+    priced_lines,
+)
 from app.services.pricing import PriceBreakdown, compute_price, money
 
 logger = logging.getLogger("aqs.quotations")
@@ -37,7 +44,8 @@ logger = logging.getLogger("aqs.quotations")
 PHT = timezone(timedelta(hours=8), "PHT")
 # 2: pricing has rounding_step/rounding/rounded_total; customer email may be empty (walk-in).
 # 3: chosen add-ons in `options`; pricing lines carry `option` ("" = always included).
-SNAPSHOT_VERSION = 3
+# 4: chosen group choices in `choices`; pricing lines carry the size they were measured at.
+SNAPSHOT_VERSION = 4
 DOWNPAYMENT_PERCENT = Decimal(50)
 
 
@@ -91,32 +99,19 @@ def quotable_products_query():  # noqa: ANN201 - SQLAlchemy Select
     )
 
 
-async def available_options(
-    db: AsyncSession, product_ids: Sequence[uuid.UUID]
-) -> dict[uuid.UUID, list[ProductOption]]:
-    """Add-ons that can be chosen: at least one line, and no archived items. Per product."""
-    if not product_ids:
-        return {}
-    own_line = ProductComponent.option_id == ProductOption.id
-    rows = await db.scalars(
-        select(ProductOption)
-        .where(
-            ProductOption.product_id.in_(product_ids),
-            exists().where(own_line),
-            ~exists().where(own_line, _uses_archived_item()),
+async def catalog_offers(db: AsyncSession, products: Sequence[Product]) -> dict[uuid.UUID, Offer]:
+    """What can be chosen for each product. Products with an incomplete offer can't be quoted."""
+    result = {}
+    for product in products:
+        result[product.id] = offer(
+            await load_components(db, product.id),
+            await load_groups(db, product.id),
+            await load_options(db, product.id),
         )
-        .order_by(ProductOption.sort_order, ProductOption.name)
-    )
-    result: dict[uuid.UUID, list[ProductOption]] = defaultdict(list)
-    for option in rows:
-        result[option.product_id].append(option)
     return result
 
 
 NOT_AVAILABLE = HTTPException(status.HTTP_404_NOT_FOUND, "This product is not available")
-OPTION_NOT_AVAILABLE = HTTPException(
-    status.HTTP_422_UNPROCESSABLE_CONTENT, "This add-on is not available"
-)
 
 
 async def price_product(
@@ -128,10 +123,10 @@ async def price_product(
     height_mm: int,
     quantity: int,
     option_ids: Sequence[uuid.UUID] = (),
-) -> tuple[PriceBreakdown, list[ProductOption]]:
-    """Price a product plus the chosen add-ons. Refuses archived products, templates or add-ons.
+) -> tuple[PriceBreakdown, Picked]:
+    """Price a product with the chosen options. Refuses archived products, templates or options.
 
-    Returns the breakdown and the chosen add-ons (in display order).
+    `option_ids` holds the chosen add-ons and exactly one choice per group.
     """
     if not product.is_active:
         raise NOT_AVAILABLE
@@ -140,31 +135,30 @@ async def price_product(
     if not base or any(not item.is_active for _, item in base):
         raise NOT_AVAILABLE
 
-    options = {o.id: o for o in await load_options(db, product.id)}
-    chosen: list[ProductOption] = []
-    for option_id in option_ids:
-        lines = [item for c, item in components if c.option_id == option_id]
-        if option_id not in options or not lines or any(not item.is_active for item in lines):
-            raise OPTION_NOT_AVAILABLE
-        chosen.append(options[option_id])
-    chosen.sort(key=lambda o: (o.sort_order, o.name))
-    names = {o.id: o.name for o in chosen}
+    groups = await load_groups(db, product.id)
+    options = await load_options(db, product.id)
+    offered = offer(components, groups, options)
+    if not offered.complete:
+        raise NOT_AVAILABLE
+    usable = {o.id for o in offered.add_ons} | {o.id for _, cs in offered.groups for o in cs}
+    if any(option_id not in usable for option_id in option_ids):
+        raise OPTION_NOT_AVAILABLE
+    picked = pick(groups, options, option_ids)
 
-    breakdown = compute_price(
-        [
-            to_component_input(c, item, names[c.option_id] if c.option_id else "")
-            for c, item in components
-            if c.option_id is None or c.option_id in names
-        ],
-        width_mm=width_mm,
-        height_mm=height_mm,
-        quantity=quantity,
-        markup_percent=settings.markup_percent,
-        vat_percent=settings.vat_percent,
-        currency=settings.currency,
-        rounding_step=settings.rounding_step,
-    )
-    return breakdown, chosen
+    try:
+        breakdown = compute_price(
+            priced_lines(components, picked),
+            width_mm=width_mm,
+            height_mm=height_mm,
+            quantity=quantity,
+            markup_percent=settings.markup_percent,
+            vat_percent=settings.vat_percent,
+            currency=settings.currency,
+            rounding_step=settings.rounding_step,
+        )
+    except ValueError as exc:  # e.g. the opening is too small for the open back
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    return breakdown, picked
 
 
 def payment_split(total: Decimal) -> tuple[Decimal, Decimal]:
@@ -196,7 +190,7 @@ def build_snapshot(
     height: Decimal,
     unit: str,
     breakdown: PriceBreakdown,
-    options: Sequence[ProductOption] = (),
+    picked: Picked | None = None,
 ) -> dict[str, Any]:
     return to_json(
         {
@@ -208,7 +202,7 @@ def build_snapshot(
                 "description": product.description,
             },
             "customer": customer,
-            "options": [{"name": o.name, "description": o.description} for o in options],
+            **(picked or Picked(choices=[], add_ons=[])).snapshot(),
             "input": {"width": width, "height": height, "unit": unit},
             "pricing": breakdown.as_dict(),
         }

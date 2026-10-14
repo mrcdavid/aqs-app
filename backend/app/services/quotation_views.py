@@ -61,6 +61,7 @@ def customer_view(q: Quotation) -> QuotationOut:
         includes=[
             line["label"] or line["name"] for line in pricing["lines"] if not line.get("option")
         ],
+        choices=[{"group": c["group"], "name": c["name"]} for c in snap.get("choices", [])],
         options=[o["name"] for o in snap.get("options", [])],
         input_width=q.input_width,
         input_height=q.input_height,

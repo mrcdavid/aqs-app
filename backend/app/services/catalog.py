@@ -98,7 +98,12 @@ async def get_option(
 
 
 def to_component_input(
-    component: ProductComponent, item: Material | LaborRate, option_name: str = ""
+    component: ProductComponent,
+    item: Material | LaborRate,
+    option_name: str = "",
+    *,
+    width_reduction_mm: int = 0,
+    height_reduction_mm: int = 0,
 ) -> ComponentInput:
     is_material = isinstance(item, Material)
     return ComponentInput(
@@ -112,6 +117,8 @@ def to_component_input(
         factor=component.factor,
         waste_percent=component.waste_percent,
         option=option_name,
+        width_reduction_mm=width_reduction_mm,
+        height_reduction_mm=height_reduction_mm,
     )
 
 
