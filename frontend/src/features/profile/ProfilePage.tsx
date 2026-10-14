@@ -68,7 +68,7 @@ export function ProfilePage() {
                   {...register('age', { valueAsNumber: true })}
                 />
               </Field>
-              {text('contact_number', 'Mobile number', 'tel', { inputMode: 'tel', placeholder: '09XX XXX XXXX' })}
+              {text('contact_number', 'Mobile number', 'tel', { inputMode: 'tel', maxLength: 20, placeholder: '09XX XXX XXXX' })}
             </div>
           </Card>
           <Card title="Address" icon={MapPin}>
