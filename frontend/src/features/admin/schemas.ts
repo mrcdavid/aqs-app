@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { optionalEmail, optionalPersonName, personName, phMobile, placeName } from '../../lib/schemas'
+
 // Mirrors backend/app/schemas/catalog.py. Decimals stay strings end to end.
 
 const code = z
@@ -115,25 +117,18 @@ export const settingsSchema = z.object({
     .trim()
     .regex(/^\d{1,6}(\.\d{1,2})?$/, 'Amount like 100, or 0 for no rounding')
     .refine((v) => Number(v) <= 100000, 'At most 100,000'),
-  owner_name: z.string().trim().max(120),
+  owner_name: optionalPersonName,
 })
 export type SettingsForm = z.input<typeof settingsSchema>
 
 /** A walk-in client typed in by staff. Mirrors ClientIn in backend/app/schemas/quotation.py. */
 export const walkInClientSchema = z.object({
-  full_name: z.string().trim().min(2, "Enter the client's full name").max(120),
-  contact_number: z
-    .string()
-    .trim()
-    .regex(/^\+?[0-9(][0-9 ()-]{5,18}[0-9]$/, 'Mobile or landline, e.g. 0917 123 4567'),
-  email: z
-    .string()
-    .trim()
-    .max(254)
-    .refine((v) => v === '' || z.email().safeParse(v).success, 'Enter a valid email, or leave it blank'),
+  full_name: personName("Enter the client's full name"),
+  contact_number: phMobile,
+  email: optionalEmail,
   address_line: z.string().trim().min(5, 'Enter the street address').max(200),
-  city: z.string().trim().min(2, 'Enter the city or municipality').max(80),
-  province: z.string().trim().min(2, 'Enter the province').max(80),
+  city: placeName('Enter the city or municipality'),
+  province: placeName('Enter the province'),
 })
 export type WalkInClientForm = z.input<typeof walkInClientSchema>
 
