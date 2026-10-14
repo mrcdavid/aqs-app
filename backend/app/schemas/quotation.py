@@ -88,6 +88,14 @@ class ReviewIn(BaseModel):
     final_total: Money | None = None
 
 
+class CancelIn(BaseModel):
+    """Staff withdrawing a pending request (e.g. the client changed their mind)."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    note: str = Field(default="", max_length=1000)  # optional reason, shown to the customer
+
+
 class RejectIn(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -147,6 +155,7 @@ class QuotationOut(BaseModel):
     review_note: str | None
     valid_until: date | None
     can_cancel: bool
+    cancelled_by_staff: bool  # cancelled by the shop rather than by the customer
 
 
 class AdminQuotationOut(QuotationOut):
