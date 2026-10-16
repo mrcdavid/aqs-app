@@ -79,9 +79,7 @@ def downgrade() -> None:
     op.create_unique_constraint(
         op.f("uq_product_options_product_id"), "product_options", ["product_id", "name"]
     )
-    op.drop_constraint(
-        op.f("ck_product_options_reduction_range"), "product_options", type_="check"
-    )
+    op.drop_constraint(op.f("ck_product_options_reduction_range"), "product_options", type_="check")
     op.drop_column("product_options", "height_reduction_mm")
     op.drop_column("product_options", "width_reduction_mm")
     op.drop_index(op.f("ix_product_options_group_id"), table_name="product_options")
