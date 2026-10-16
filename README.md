@@ -3,9 +3,15 @@
 A web app that makes quotation PDFs for glass, aluminium and metal fabrication jobs
 (sliding windows, sliding doors, window grills, …).
 
-A customer signs in with their `@up.edu.ph` Google account, picks a product, enters the size
-(cm or inches) and clicks **Process** to get a draft PDF right away. An admin then approves or
-rejects it; approved quotes get an official number (`AQS-2026-000123`) and a final PDF.
+A customer signs in with their `@up.edu.ph` Google account — or staff quote a walk-in client —
+adds one or more items (product, glass choice, add-ons such as an open back frame, size in cm or
+inches, quantity) and clicks **Process** to get a draft PDF right away. An admin then approves
+(optionally adjusting the final amount), rejects or cancels it; approved quotes get an official
+number (`AQS-2026-000123`) and a final PDF with the 50/50 payment terms and signature lines.
+
+Prices are always calculated on the server from your price list, rounded up in your favour, and
+shown to clients VAT-inclusive (no VAT line, unit prices or materials). The dashboard shows your
+approved business. Detailed business rules: [docs/quotations.md](docs/quotations.md).
 
 | Part      | Tech                                                           | Folder      |
 |-----------|----------------------------------------------------------------|-------------|
@@ -191,19 +197,46 @@ To stop a server, press `Ctrl + C` in its terminal.
 
 ### First things to do after signing in as super admin
 
-The database starts empty (except default pricing settings: markup 0 %, VAT 12 %, PHP).
-Before customers can get quotes, set up the catalogue in the admin area:
+The database starts empty (except default settings: markup 0 %, VAT 12 %, PHP, round up to the
+next ₱100, owner name "Cleo David"). Before anyone can get quotes, set up the admin area:
 
-1. **Settings** — business name, address, contact details, terms, markup, VAT, quote validity.
-2. **Materials** — e.g. aluminium frame, glass panel, with prices and units.
-3. **Labour rates** — e.g. installation per metre.
-4. **Products** — build each product template from materials and labour rates, with min/max sizes.
+1. **Settings** — business name, address, contact, terms (printed on PDFs), owner name (signature
+   line), markup, VAT, quote validity, and **Round totals up to the next** (100 turns 21,423 into
+   21,500; 0 = off).
+2. **Materials** — e.g. aluminium profiles, glass, rollers, each priced per m², per metre or per piece.
+3. **Labour rates** — e.g. installation per m².
+4. **Products** — for each product set the allowed sizes, then build its **price template**:
+   - **Always included** lines: the parts every unit needs. Each line = a material or labour rate ×
+     how it's measured (area, perimeter, width, height or a fixed count) × factor × waste %.
+   - **Choice groups** for "pick one" questions, e.g. *Glass type* with choices *Ordinary* and
+     *Reflective*, each with its own glass line. The first choice is pre-selected on the forms.
+   - **Add-ons** for optional extras, e.g. *Open back (outer jamb)*. For a frame around the window,
+     set how many mm narrower/shorter the window becomes: the size typed is then the wall opening.
+   - Use the **Price preview** to try sizes, choices and add-ons; it updates as you tick them.
+5. **Users → Add staff account** — create admin accounts (only the super admin can).
 
 Then sign in as a customer, complete the profile, and create a quotation.
 
 ---
 
-## 6. Tests and code checks
+## 6. Using the app
+
+| Task | Where | Notes |
+|------|-------|-------|
+| Request a quotation | Customer: **New quotation** | Add items with **Add another item** (up to 20): product, choice, add-ons, size, quantity. **Process** gives a draft PDF. |
+| Quote a walk-in client | Admin: **Quotations → New quotation** | Type the client's name, PH mobile, optional email and address, then the items. |
+| Review | Admin: open a pending quotation | **Approve** (you can change the final amount — it shows as an adjustment), **Reject** (reason required) or **Cancel**. Each asks *Yes / No* first. |
+| Print | Customer: **View / print PDF** · Staff: **Draft PDF** / **Official PDF** | Drafts are watermarked *ESTIMATE · PENDING APPROVAL*; approved ones carry the quote number. |
+| Delete | Super admin: open any quotation → **Delete** | Hidden from every list, the customer and the dashboard; kept in the database and the audit log. |
+| Dashboard | Admin: **Dashboard** | Approved quotations only (value, average, per day, by province and product, largest projects); plus approval rate and the review queue. |
+| Audit log | Admin: **Audit log** | Who did what and when (logins, price changes, approvals, deletions…). |
+
+Required fields are marked with a red `*`. Mobile numbers must be Philippine mobile numbers
+(`0917 123 4567` or `+63 917 123 4567`).
+
+---
+
+## 7. Tests and code checks
 
 **Backend** (from `backend/`):
 
@@ -229,7 +262,7 @@ npm run build
 
 ---
 
-## 7. Common tasks
+## 8. Common tasks
 
 ### Forgot a staff/owner password
 
@@ -241,6 +274,13 @@ uv run python -m scripts.reset_staff_password
 
 This sets a new password, unlocks the account and signs it out everywhere. It only works for
 staff accounts (customers use Google).
+
+### Add an admin account
+
+Sign in as the super admin → **Users → Add staff account** → choose **Admin**, set a password
+(12+ characters, not a common password, not containing the email name). If you keep a private
+list of staff logins, `staff-accounts.txt` in the project folder is git-ignored (it is never
+pushed to GitHub — but it is synced by OneDrive, so a password manager is safer).
 
 ### Changing the database structure
 
@@ -264,11 +304,13 @@ uv run alembic check
 |------|-------|
 | All app data | PostgreSQL database `aqs` (browse it in pgAdmin 4) |
 | Final (approved) quotation PDFs | `backend/storage/quotes/` — git-ignored, served only through the logged-in API |
-| Draft PDFs | Not stored; generated on request from the saved price snapshot |
+| Draft PDFs | Not stored; generated on request from the saved price snapshots |
+| Deleted quotations | Still in the `quotations` table (`deleted_at` set) and in the audit log |
+| Business rules (pricing, options, items, dashboard) | [docs/quotations.md](docs/quotations.md) |
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
@@ -283,10 +325,18 @@ uv run alembic check
 | `password authentication failed for user "postgres"` | Wrong password in `POSTGRES_ADMIN_URL` — use the one you log into pgAdmin with. |
 | `relation "..." does not exist` | Tables are missing or outdated — run `uv run alembic upgrade head`. |
 | Staff account locked | 10 failed logins lock it for 15 minutes. Wait, or run `scripts.reset_staff_password`. |
+| Signed out of the admin area | Staff sessions end after 30 minutes without activity (customers: 8 hours). Sign in again. |
+| A product is missing from the quotation form | Its template has no always-included lines, uses an archived material, or every choice of one of its groups uses an archived material. Check it under **Products**. |
+| An add-on or choice doesn't change the price | It has no lines yet — add its material/labour lines in the product's template (the price preview marks it "no lines yet"). |
+| "Item 2: width must be …" | That item's size is outside the product's allowed range (set on the product). |
+| "Choose one option for Glass type" | Pick one choice in each group (the form pre-selects the first). |
+| "The size is too small for the chosen options" | The opening minus the open back's reduction leaves no window — check the size or the add-on's mm. |
+| The dashboard shows fewer quotations than the list | It counts approved quotations only (pending, rejected, cancelled and deleted ones are left out). |
+| A quotation disappeared | A super admin deleted it; see **Audit log** (filter "quotation"). |
 
 ---
 
-## 9. Production
+## 10. Production
 
 Hosting hasn't been decided yet. When it is, the app must run behind **HTTPS** with one reverse
 proxy (e.g. Nginx or Caddy) that serves the built frontend (`frontend/dist/`) and forwards `/api`
@@ -296,4 +346,6 @@ redirect URI to the real domain.
 
 ---
 
-More detail for developers (architecture, security rules, decisions log): see [CLAUDE.md](CLAUDE.md).
+More detail for developers: architecture, security rules and the decisions log in
+[CLAUDE.md](CLAUDE.md); pricing, options, items, statuses, PDF and dashboard rules in
+[docs/quotations.md](docs/quotations.md).
