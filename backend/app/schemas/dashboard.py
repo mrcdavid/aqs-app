@@ -5,15 +5,13 @@ from pydantic import BaseModel
 
 
 class DayPoint(BaseModel):
-    day: date  # Philippine date
-    requested: int
+    day: date  # Philippine date the quotation was requested
     approved: int
     approved_value: Decimal
 
 
 class GroupRow(BaseModel):
     label: str
-    requested: int
     approved: int
     approved_value: Decimal
 
@@ -29,17 +27,19 @@ class ProjectRow(BaseModel):
 
 
 class DashboardOut(BaseModel):
-    """All figures count quotations *requested* within [date_from, date_to] (Philippine dates)."""
+    """Approved quotations only, requested within [date_from, date_to] (Philippine dates).
+
+    Two exceptions: the approval rate also needs the rejected count, and `pending_now` counts
+    every request still waiting for review. Deleted quotations never count.
+    """
 
     date_from: date
     date_to: date
     currency: str
-    requested: int
-    pending: int
     approved: int
-    rejected: int
-    cancelled: int
     approved_value: Decimal
+    average_value: Decimal | None  # approved_value / approved; None if nothing approved
+    rejected: int
     approval_rate: Decimal | None  # approved / (approved + rejected), percent; None if no reviews
     pending_now: int  # all pending requests, regardless of date
     per_day: list[DayPoint]

@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models import ProductCategory, QuotationStatus
+from app.models import MAX_ITEMS, ProductCategory, QuotationStatus
 from app.schemas.catalog import OptionIds, PricePreviewOut
 from app.schemas.common import OptionalEmail, PersonName, PhMobile, PlaceName
 
@@ -49,7 +49,9 @@ class CatalogProductOut(BaseModel):
     options: list[CatalogOptionOut] = []  # add-ons, tick any
 
 
-class QuotationIn(BaseModel):
+class QuotationItemIn(BaseModel):
+    """One product of the request, with its size, quantity, choices and add-ons."""
+
     model_config = ConfigDict(extra="forbid")
 
     product_id: uuid.UUID
@@ -57,7 +59,13 @@ class QuotationIn(BaseModel):
     height: Size
     unit: Literal["cm", "in"]
     quantity: int = Field(default=1, ge=1, le=100)
-    option_ids: OptionIds = []
+    option_ids: OptionIds = []  # the chosen add-ons plus one choice per group
+
+
+class QuotationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[QuotationItemIn] = Field(min_length=1, max_length=MAX_ITEMS)
 
 
 class ClientIn(BaseModel):
@@ -102,14 +110,18 @@ class RejectIn(BaseModel):
     note: str = Field(min_length=3, max_length=1000)
 
 
-class QuotationSummaryOut(BaseModel):
-    id: uuid.UUID
-    number: str | None
-    status: QuotationStatus
+class ItemSummaryOut(BaseModel):
     product_name: str
     width_mm: int
     height_mm: int
     quantity: int
+
+
+class QuotationSummaryOut(BaseModel):
+    id: uuid.UUID
+    number: str | None
+    status: QuotationStatus
+    items: list[ItemSummaryOut]
     total: Decimal
     currency: str
     created_at: datetime
@@ -128,13 +140,10 @@ class ChoiceOut(BaseModel):
     name: str
 
 
-class QuotationOut(BaseModel):
-    """Customer view: one amount (VAT included) and the payment split. Never costs, markup,
-    VAT or unit prices: what isn't sent can't be read in the browser either."""
+class QuotationItemOut(BaseModel):
+    """One item as the customer sees it: its amount (VAT included), never costs or VAT."""
 
-    id: uuid.UUID
-    number: str | None
-    status: QuotationStatus
+    position: int
     product_name: str
     product_description: str
     includes: list[str]
@@ -146,6 +155,19 @@ class QuotationOut(BaseModel):
     width_mm: int
     height_mm: int
     quantity: int
+    amount: Decimal  # for the whole quantity, VAT included, rounded up
+
+
+class QuotationOut(BaseModel):
+    """Customer view: an amount per item (VAT included), the total and the payment split. Never
+    costs, markup, VAT or unit prices: what isn't sent can't be read in the browser either."""
+
+    id: uuid.UUID
+    number: str | None
+    status: QuotationStatus
+    items: list[QuotationItemOut]
+    subtotal: Decimal  # sum of the item amounts
+    adjustment: Decimal  # total - subtotal: an amount changed on approval (0 if none)
     total: Decimal
     downpayment: Decimal  # 50% before work starts
     balance: Decimal  # 50% on completion and installation
@@ -158,10 +180,14 @@ class QuotationOut(BaseModel):
     cancelled_by_staff: bool  # cancelled by the shop rather than by the customer
 
 
+class AdminQuotationItemOut(QuotationItemOut):
+    breakdown: PricePreviewOut  # full internal breakdown, including markup and VAT
+
+
 class AdminQuotationOut(QuotationOut):
+    items: list[AdminQuotationItemOut]  # type: ignore[assignment]  # adds each breakdown
     walk_in: bool
     customer: dict[str, Any]
     created_by_email: str | None
     reviewed_by_email: str | None
-    total_adjusted: bool  # total differs from the calculated (rounded) price
-    breakdown: PricePreviewOut  # full internal breakdown, including markup and VAT
+    total_adjusted: bool  # total differs from the sum of the item amounts

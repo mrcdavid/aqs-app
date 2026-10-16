@@ -11,37 +11,33 @@ import { RequiredNote } from '../../components/ui/Field'
 import { messageOf } from '../../lib/errors'
 import { toast } from '../../stores/feedback'
 import type { newQuotationLoader } from './loader'
-import { EMPTY_QUOTE_ITEM, missingChoice, quoteItemSchema, sizeErrors, toRequest, type QuoteItemValues } from './quoteItem'
-import { ProductStep, SizeStep } from './QuoteItemFields'
+import { checkItems, EMPTY_QUOTE_FORM, quoteFormSchema, toRequest, type QuoteFormValues } from './quoteItem'
+import { QuoteItems } from './QuoteItemFields'
 
 export function NewQuotationPage() {
   const { products } = useLoaderData<typeof newQuotationLoader>()
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
 
-  const form = useForm<QuoteItemValues>({
-    resolver: zodResolver(quoteItemSchema),
-    defaultValues: EMPTY_QUOTE_ITEM,
+  const form = useForm<QuoteFormValues>({
+    resolver: zodResolver(quoteFormSchema),
+    defaultValues: EMPTY_QUOTE_FORM,
   })
   const { handleSubmit, control, setError: setFieldError, formState } = form
   const { isSubmitting } = formState
-  const [productId, unit, width, height] = useWatch({ control, name: ['product_id', 'unit', 'width', 'height'] })
-  const product = products.find((p) => p.id === productId)
+  const items = useWatch({ control, name: 'items' })
 
-  async function onSubmit(values: QuoteItemValues) {
+  async function onSubmit(values: QuoteFormValues) {
     setError(null)
-    if (!product) return
-    const sizes = sizeErrors(values, product)
-    if (sizes.width) setFieldError('width', { message: sizes.width })
-    if (sizes.height) setFieldError('height', { message: sizes.height })
-    if (sizes.width || sizes.height) return
-    const missing = missingChoice(values, product)
-    if (missing) {
-      setError(`Choose an option for ${missing}.`)
-      return
+    const issues = checkItems(values.items, products)
+    for (const issue of issues) {
+      if (issue.field) setFieldError(`items.${issue.index}.${issue.field}`, { message: issue.message })
     }
+    const general = issues.find((i) => !i.field)
+    if (general) setError(general.message)
+    if (issues.length > 0) return
     try {
-      const created = await quotationsApi.create(toRequest(quoteItemSchema.parse(values), product))
+      const created = await quotationsApi.create(toRequest(quoteFormSchema.parse(values).items, products))
       toast.success('Your estimate is ready.')
       navigate(`/app/quotations/${created.id}`)
     } catch (err) {
@@ -65,7 +61,7 @@ export function NewQuotationPage() {
       <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-6 pb-24 sm:pb-0">
         <PageHeader
           title="New quotation"
-          description="Choose a product, enter the size, and click Process to get your estimate."
+          description="Add each product you need with its size, then click Process to get one estimate for everything."
           icon={FilePlus2}
           backTo="/app/quotations"
           backLabel="My quotations"
@@ -73,16 +69,15 @@ export function NewQuotationPage() {
         <ErrorBanner message={error} />
         <RequiredNote />
 
-        <fieldset disabled={isSubmitting} className="space-y-6">
-          <ProductStep n={1} products={products} />
-          <SizeStep n={2} products={products} />
+        <fieldset disabled={isSubmitting}>
+          <QuoteItems products={products} />
         </fieldset>
 
         {/* Actions: sticky above the phone tab bar, inline on larger screens */}
         <div className="fixed inset-x-0 bottom-16 z-20 border-t border-line bg-surface/95 px-4 py-3 backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
           <div className="mx-auto flex max-w-5xl items-center gap-3 sm:justify-end">
             <p className="min-w-0 flex-1 truncate text-sm text-muted sm:hidden">
-              {product ? `${product.name}${width && height ? ` · ${width} × ${height} ${unit}` : ''}` : 'Choose a product'}
+              {items.length === 1 ? '1 item' : `${items.length} items`}
             </p>
             <ButtonLink to="/app/quotations" variant="secondary" icon={X} className="max-sm:hidden">
               Cancel

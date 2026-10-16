@@ -39,20 +39,15 @@ export interface QuotationSummary {
   id: string
   number: string | null
   status: QuotationStatus
-  product_name: string
-  width_mm: number
-  height_mm: number
-  quantity: number
+  items: { product_name: string; width_mm: number; height_mm: number; quantity: number }[]
   total: string
   currency: string
   created_at: string
 }
 
-/** What the customer sees: one amount (VAT included, never itemised) and the 50/50 split. */
-export interface Quotation {
-  id: string
-  number: string | null
-  status: QuotationStatus
+/** One product of a quotation, with its own amount (VAT included, never itemised). */
+export interface QuotationItem {
+  position: number
   product_name: string
   product_description: string
   includes: string[]
@@ -66,6 +61,20 @@ export interface Quotation {
   width_mm: number
   height_mm: number
   quantity: number
+  /** For the whole quantity, VAT included, rounded up */
+  amount: string
+}
+
+/** What the customer sees: an amount per item and the total (VAT included), and the 50/50 split. */
+export interface Quotation {
+  id: string
+  number: string | null
+  status: QuotationStatus
+  items: QuotationItem[]
+  /** Sum of the item amounts */
+  subtotal: string
+  /** total - subtotal: an amount changed on approval ('0.00' if none) */
+  adjustment: string
   total: string
   /** 50% before work starts */
   downpayment: string
@@ -81,7 +90,7 @@ export interface Quotation {
   cancelled_by_staff: boolean
 }
 
-export interface QuotationRequest {
+export interface QuotationItemRequest {
   product_id: string
   width: string
   height: string
@@ -89,6 +98,10 @@ export interface QuotationRequest {
   quantity: number
   /** Chosen add-ons plus one choice per group */
   option_ids: string[]
+}
+
+export interface QuotationRequest {
+  items: QuotationItemRequest[]
 }
 
 export const quotationsApi = {

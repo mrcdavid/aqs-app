@@ -2,7 +2,7 @@
 // into numbers for arithmetic — the server does all pricing.
 
 import { api } from './client'
-import type { Quotation, QuotationRequest, QuotationStatus, QuotationSummary } from './quotations'
+import type { Quotation, QuotationItem, QuotationRequest, QuotationStatus, QuotationSummary } from './quotations'
 
 export type PriceUnit = 'sqm' | 'lm' | 'piece'
 export type MaterialCategory = 'glass' | 'aluminum' | 'metal' | 'hardware' | 'other'
@@ -150,7 +150,13 @@ export interface AdminQuotationSummary extends QuotationSummary {
   customer_province: string
 }
 
+export interface AdminQuotationItem extends QuotationItem {
+  /** Full internal breakdown, including markup and VAT */
+  breakdown: PricePreview
+}
+
 export interface AdminQuotation extends Quotation {
+  items: AdminQuotationItem[]
   walk_in: boolean
   customer: {
     /** Empty for walk-in clients who gave none */
@@ -163,9 +169,8 @@ export interface AdminQuotation extends Quotation {
   }
   created_by_email: string | null
   reviewed_by_email: string | null
-  /** The total was changed by hand on approval */
+  /** The total was changed on approval, so it differs from the sum of the item amounts */
   total_adjusted: boolean
-  breakdown: PricePreview
 }
 
 export interface WalkInClient {
@@ -202,16 +207,15 @@ export interface AuditFilters {
   before_id?: number
 }
 
+/** Dashboard figures count approved quotations only (requested in the date range). */
 export interface DayPoint {
   day: string
-  requested: number
   approved: number
   approved_value: string
 }
 
 export interface GroupRow {
   label: string
-  requested: number
   approved: number
   approved_value: string
 }
@@ -220,12 +224,12 @@ export interface Dashboard {
   date_from: string
   date_to: string
   currency: string
-  requested: number
-  pending: number
   approved: number
-  rejected: number
-  cancelled: number
   approved_value: string
+  /** approved_value / approved; null if nothing was approved */
+  average_value: string | null
+  /** Only used for the approval rate */
+  rejected: number
   approval_rate: string | null
   pending_now: number
   per_day: DayPoint[]
@@ -338,6 +342,8 @@ export const adminApi = {
   cancelQuotation: (id: string, note: string) =>
     api<AdminQuotation>(`/admin/quotations/${id}/cancel`, json('POST', { note })),
   quotationPdfUrl: (id: string) => `/api/v1/admin/quotations/${id}/pdf`,
+  /** Super admin only. Hides the quotation everywhere; it stays in the database. */
+  deleteQuotation: (id: string) => api<void>(`/admin/quotations/${id}`, { method: 'DELETE' }),
 
   auditLog: (filters: AuditFilters) => {
     const params = new URLSearchParams()

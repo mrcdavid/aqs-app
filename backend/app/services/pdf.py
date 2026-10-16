@@ -1,8 +1,9 @@
-"""Quotation PDFs with ReportLab. Built only from the quotation snapshot, never from live prices.
+"""Quotation PDFs with ReportLab. Built only from the frozen snapshots, never from live prices.
 
-Customer-facing: shows one amount (VAT included but never itemised), the 50/50 payment terms and
-signature lines; never unit prices, internal costs, markup or VAT. All user-provided text is
-escaped before it reaches ReportLab's markup parser.
+Customer-facing: one row per item with its amount (VAT included but never itemised), the total,
+the 50/50 payment terms and signature lines; never the materials and labour it is made of,
+unit prices, internal costs, markup or VAT.
+All user-provided text is escaped before it reaches ReportLab's markup parser.
 
 Look: the app's Blue -> Indigo gradient (frontend/src/index.css) on the header band and the total,
 slate text, soft rounded cards. Fonts are the built-in Helvetica family (no font files needed).
@@ -48,7 +49,7 @@ DANGER = colors.HexColor("#dc2626")
 
 PAGE_W, PAGE_H = A4
 MARGIN = 16 * mm
-BAND = 44 * mm  # gradient header height
+BAND = 40 * mm  # gradient header height
 PAD = 6  # ReportLab's frame padding (points) on each side
 WIDTH = PAGE_W - 2 * MARGIN - 2 * PAD  # content width
 LEFT, RIGHT = MARGIN + PAD, PAGE_W - MARGIN - PAD  # content edges, for drawing on the canvas
@@ -57,7 +58,8 @@ UNITS = {"cm": "cm", "in": "in"}
 
 @dataclass(frozen=True)
 class PdfInput:
-    snapshot: dict[str, Any]
+    snapshot: dict[str, Any]  # the quotation's: the client
+    items: list[dict[str, Any]]  # each item's snapshot plus its "amount"
     business: dict[str, Any]
     reference: str  # quote number, or DRAFT-xxxxxxxx
     created_at: datetime
@@ -93,6 +95,7 @@ def _styles() -> dict[str, ParagraphStyle]:
             alignment=TA_RIGHT,
         ),
         "right": ParagraphStyle("right", parent=body, alignment=TA_RIGHT),
+        "small_right": ParagraphStyle("small_right", parent=small, alignment=TA_RIGHT),
         "right_bold": ParagraphStyle("right_bold", parent=bold, alignment=TA_RIGHT),
         "pay_amount": ParagraphStyle(
             "pay_amount", parent=bold, fontSize=13, leading=17, textColor=BRAND_INK
@@ -310,13 +313,15 @@ def _signatures(owner: str, client: str, s: dict[str, ParagraphStyle]) -> KeepTo
         ],
         ["", "", Paragraph("Date: ______________________", s["small"])],
     ]
-    table = Table(rows, colWidths=[half, gap, half], rowHeights=[None, 15 * mm, None, None, 9 * mm])
+    table = Table(rows, colWidths=[half, gap, half], rowHeights=[None, 12 * mm, None, None, 7 * mm])
     table.setStyle(
         TableStyle(
             [
                 ("LINEABOVE", (0, 2), (0, 2), 0.8, LINE_STRONG),
                 ("LINEABOVE", (2, 2), (2, 2), 0.8, LINE_STRONG),
                 ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 1.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
                 ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
             ]
         )
@@ -326,13 +331,8 @@ def _signatures(owner: str, client: str, s: dict[str, ParagraphStyle]) -> KeepTo
 
 def render_quotation_pdf(data: PdfInput) -> bytes:
     s = _styles()
-    snap = data.snapshot
-    pricing = snap["pricing"]
-    currency = pricing["currency"]
-    customer = snap["customer"]
-    product = snap["product"]
-    inp = snap["input"]
-    unit = UNITS.get(inp["unit"], inp["unit"])
+    customer = data.snapshot["customer"]
+    currency = data.items[0]["pricing"]["currency"]
     half = (WIDTH - 6 * mm) / 2
     story: list[Any] = []
 
@@ -370,50 +370,93 @@ def render_quotation_pdf(data: PdfInput) -> bytes:
         )
     )
     details_card = _card([[_label("Details", s)], [details_table]], half)
-    story += [_side_by_side(client_card, details_card), Spacer(1, 7 * mm)]
+    story += [_side_by_side(client_card, details_card), Spacer(1, 5 * mm)]
 
-    # What is being made: no prices per line.
-    includes = ", ".join(
-        line["label"] or line["name"] for line in pricing["lines"] if not line.get("option")
-    )
-    description: list[Any] = [_p(product["name"], s["item"])]
-    if product.get("description"):
-        description.append(_p(product["description"], s["small"]))
-    description.append(_p(f"Includes: {includes}", s["small"]))
-    for choice in snap.get("choices", []):
-        description.append(_p(f"{choice['group']}: {choice['name']}", s["choice"]))
-    if add_ons := [o["name"] for o in snap.get("options", [])]:
-        description.append(_p(f"With: {', '.join(add_ons)}", s["with"]))
-    size = [
-        _p(f"{_num(inp['width'])} x {_num(inp['height'])} {unit}", s["bold"]),
-        _p(f"{pricing['width_mm']} x {pricing['height_mm']} mm", s["small"]),
-    ]
-    items = Table(
+    # What is being made: one row per item with its amount, no prices per line.
+    rows: list[list[Any]] = [
         [
-            [_label("Description", s), _label("Size", s), Paragraph("QTY", s["label_right"])],
-            [description, size, _p(str(pricing["quantity"]), s["right_bold"])],
-        ],
-        colWidths=[WIDTH - 62 * mm, 44 * mm, 18 * mm],
-    )
+            Paragraph("#", s["label"]),
+            _label("Description", s),
+            _label("Size", s),
+            Paragraph("QTY", s["label_right"]),
+            Paragraph("AMOUNT", s["label_right"]),
+        ]
+    ]
+    for n, item in enumerate(data.items, start=1):
+        pricing, product, inp = item["pricing"], item["product"], item["input"]
+        unit = UNITS.get(inp["unit"], inp["unit"])
+        # The materials and labour lines are never listed: only the product and what was chosen.
+        description: list[Any] = [_p(product["name"], s["item"])]
+        if product.get("description"):
+            description.append(_p(product["description"], s["small"]))
+        for choice in item.get("choices", []):
+            description.append(_p(f"{choice['group']}: {choice['name']}", s["choice"]))
+        if add_ons := [o["name"] for o in item.get("options", [])]:
+            description.append(_p(f"With: {', '.join(add_ons)}", s["with"]))
+        size = [
+            _p(f"{_num(inp['width'])} x {_num(inp['height'])} {unit}", s["bold"]),
+            _p(f"{pricing['width_mm']} x {pricing['height_mm']} mm", s["small"]),
+        ]
+        rows.append(
+            [
+                _p(str(n), s["small"]),
+                description,
+                size,
+                _p(str(pricing["quantity"]), s["right_bold"]),
+                _p(_money(item["amount"], currency), s["right_bold"]),
+            ]
+        )
+    items = Table(rows, colWidths=[8 * mm, WIDTH - 104 * mm, 38 * mm, 14 * mm, 44 * mm])
     items.setStyle(
         TableStyle(
             [
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("ALIGN", (2, 0), (2, -1), "RIGHT"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 0),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (1, 0), (2, -1), 8),
                 ("TOPPADDING", (0, 0), (-1, -1), 6),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
                 ("LINEBELOW", (0, 0), (-1, 0), 0.8, LINE_STRONG),
-                ("LINEBELOW", (0, -1), (-1, -1), 0.5, LINE),
+                ("LINEBELOW", (0, 1), (-1, -1), 0.5, LINE),
             ]
         )
     )
-    story += [items, Spacer(1, 5 * mm)]
+    story += [items, Spacer(1, 4 * mm)]
 
-    # One amount: VAT is included but not shown.
+    # An amount changed on approval shows as an adjustment, so the numbers still add up.
+    subtotal = sum((Decimal(item["amount"]) for item in data.items), Decimal(0))
+    if data.total != subtotal:
+        adjustment = data.total - subtotal
+        sign = "+" if adjustment > 0 else "-"
+        sums = Table(
+            [
+                [
+                    Paragraph("Subtotal", s["small_right"]),
+                    _p(_money(subtotal, currency), s["right"]),
+                ],
+                [
+                    Paragraph("Adjustment", s["small_right"]),
+                    _p(f"{sign} {_money(abs(adjustment), currency)}", s["right"]),
+                ],
+            ],
+            colWidths=[WIDTH - 44 * mm, 44 * mm],
+        )
+        sums.setStyle(
+            TableStyle(
+                [
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (0, -1), 10),
+                    ("TOPPADDING", (0, 0), (-1, -1), 1),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+                ]
+            )
+        )
+        story += [sums, Spacer(1, 3 * mm)]
+
+    # The total: VAT is included but not shown.
     label = "Estimated amount" if data.draft else "Total amount"
-    story += [GradientBanner(label, _money(data.total, currency), WIDTH), Spacer(1, 6 * mm)]
+    story += [GradientBanner(label, _money(data.total, currency), WIDTH), Spacer(1, 5 * mm)]
 
     # Payment terms as two cards.
     downpayment, balance = payment_split(data.total)
@@ -447,7 +490,7 @@ def render_quotation_pdf(data: PdfInput) -> bytes:
             _p(data.business["terms"], s["small"]),
         ]
     story += [
-        Spacer(1, 12 * mm),
+        Spacer(1, 6 * mm),
         _signatures(data.business.get("owner_name") or "", customer["full_name"], s),
     ]
 
@@ -458,8 +501,8 @@ def render_quotation_pdf(data: PdfInput) -> bytes:
         pagesize=A4,
         leftMargin=MARGIN,
         rightMargin=MARGIN,
-        topMargin=BAND + 8 * mm,
-        bottomMargin=22 * mm,
+        topMargin=BAND + 6 * mm,
+        bottomMargin=20 * mm,
         title=f"{'Estimate' if data.draft else 'Quotation'} {data.reference}",
         author=data.business.get("name") or "AQS APP",
     )

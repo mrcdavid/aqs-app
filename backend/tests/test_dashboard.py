@@ -24,17 +24,23 @@ async def test_dashboard_counts(customer: AsyncClient, admin: AsyncClient, produ
     assert r.status_code == 200
 
     d = (await admin.get(API)).json()
-    assert (d["requested"], d["pending"], d["approved"], d["rejected"]) == (3, 1, 1, 1)
-    assert d["approved_value"] == "12000.00"
+    # Only the approved quotation counts; rejected is used for the approval rate only.
+    assert (d["approved"], d["rejected"]) == (1, 1)
+    assert d["approved_value"] == d["average_value"] == "12000.00"
     assert Decimal(d["approval_rate"]) == Decimal("50.0")
     assert d["pending_now"] == 1
+    assert "requested" not in d and "pending" not in d
 
     assert len(d["per_day"]) == 30 and d["per_day"][-1]["day"] == today_pht().isoformat()
-    assert d["per_day"][-1]["requested"] == 3 and d["per_day"][-1]["approved"] == 1
-    assert sum(p["requested"] for p in d["per_day"]) == 3
+    assert d["per_day"][-1] == {
+        "day": today_pht().isoformat(),
+        "approved": 1,
+        "approved_value": "12000.00",
+    }
+    assert sum(p["approved"] for p in d["per_day"]) == 1
 
     assert d["by_location"] == [
-        {"label": "Metro Manila", "requested": 3, "approved": 1, "approved_value": "12000.00"}
+        {"label": "Metro Manila", "approved": 1, "approved_value": "12000.00"}
     ]
     assert d["by_product"][0]["label"] == "Standard sliding window"
     assert [p["number"] for p in d["top_projects"]] == [f"AQS-{today_pht().year}-000001"]
@@ -48,7 +54,8 @@ async def test_date_range(admin: AsyncClient):  # noqa: F811
             params={"date_from": old.isoformat(), "date_to": (old + timedelta(days=6)).isoformat()},
         )
     ).json()
-    assert d["requested"] == 0 and len(d["per_day"]) == 7 and d["approval_rate"] is None
+    assert d["approved"] == 0 and len(d["per_day"]) == 7
+    assert d["approval_rate"] is None and d["average_value"] is None
     bad = await admin.get(API, params={"date_from": "2026-02-01", "date_to": "2026-01-01"})
     assert bad.status_code == 422
     too_long = await admin.get(API, params={"date_from": "2024-01-01", "date_to": "2026-01-01"})

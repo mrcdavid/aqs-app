@@ -52,8 +52,8 @@ export async function adminNewQuotationLoader() {
 }
 
 export async function adminQuotationDetailLoader({ params }: LoaderFunctionArgs) {
-  await staff()
-  return { quotation: await adminApi.quotation(params.quotationId ?? '') }
+  const me = await staff()
+  return { me, quotation: await adminApi.quotation(params.quotationId ?? '') }
 }
 
 export async function auditLogLoader({ request }: LoaderFunctionArgs) {

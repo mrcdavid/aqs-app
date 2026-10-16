@@ -17,24 +17,26 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
   const [error, setError] = useState<string | null>(null)
   const [optionIds, setOptionIds] = useState<string[]>([])
   const [picks, setPicks] = useState<Record<string, string>>({})
-  const toggle = (id: string) => setOptionIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]))
   const addOns = product.options.filter((o) => o.group_id === null)
+  const hasLines = (optionId: string) => product.components.some((c) => c.option_id === optionId)
   const groups = product.option_groups
     .map((g) => ({ ...g, choices: product.options.filter((o) => o.group_id === g.id) }))
     .filter((g) => g.choices.length > 0)
+  type Group = (typeof groups)[number]
   // The picked choice of a group, or its first one (like the quotation form).
-  const pickOf = (g: (typeof groups)[number]) => g.choices.find((c) => c.id === picks[g.id])?.id ?? g.choices[0].id
+  const pickOf = (g: Group, chosen: Record<string, string>) =>
+    g.choices.find((c) => c.id === chosen[g.id])?.id ?? g.choices[0].id
   const { register, handleSubmit, formState } = useForm<PreviewForm>({
     resolver: zodResolver(previewSchema),
     defaultValues: { width: '120', height: '100', unit: 'cm', quantity: 1 },
   })
   const { errors, isSubmitting } = formState
 
-  async function onSubmit(values: PreviewForm) {
+  async function calculate(values: PreviewForm, ids: string[], chosen: Record<string, string>) {
     setError(null)
     try {
       // One choice per group, plus the ticked add-ons that still exist.
-      const option_ids = [...groups.map(pickOf), ...optionIds.filter((id) => addOns.some((o) => o.id === id))]
+      const option_ids = [...groups.map((g) => pickOf(g, chosen)), ...ids.filter((id) => addOns.some((o) => o.id === id))]
       setResult(await adminApi.pricePreview(product.id, { ...previewSchema.parse(values), option_ids }))
     } catch (err) {
       setResult(null)
@@ -42,14 +44,33 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
     }
   }
 
+  // Ticking an add-on or switching a choice re-prices straight away, with the size typed above.
+  // The new values are passed in directly: state set in the same click isn't readable yet.
+  function recalculate(ids: string[], chosen: Record<string, string>) {
+    void handleSubmit((values) => calculate(values, ids, chosen))()
+  }
+
+  function toggle(id: string) {
+    const next = optionIds.includes(id) ? optionIds.filter((x) => x !== id) : [...optionIds, id]
+    setOptionIds(next)
+    recalculate(next, picks)
+  }
+
+  function choose(groupId: string, optionId: string) {
+    const next = { ...picks, [groupId]: optionId }
+    setPicks(next)
+    recalculate(optionIds, next)
+  }
+
   const money = (v: string) => (result ? formatMoney(v, result.currency) : v)
 
   return (
     <Card title="Price preview" icon={Calculator}>
       <p className="mb-4 text-sm text-muted">
-        Try sample sizes to check the template. Uses current prices and settings; nothing is saved.
+        Try sample sizes to check the template. Ticking an add-on or changing a choice updates the price straight
+        away. Uses current prices and settings; nothing is saved.
       </p>
-      <form onSubmit={handleSubmit(onSubmit)} noValidate className="grid grid-cols-2 items-end gap-3 sm:grid-cols-5">
+      <form onSubmit={handleSubmit((values) => calculate(values, optionIds, picks))} noValidate className="grid grid-cols-2 items-end gap-3 sm:grid-cols-5">
         <Field label="Width" htmlFor="pv-width" required error={errors.width?.message}>
           <input id="pv-width" inputMode="decimal" className={`${inputClass} tabular-nums`} {...register('width')} />
         </Field>
@@ -83,8 +104,8 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
               <span className="text-muted">{g.name}:</span>
               <select
                 className={`${inputClass} w-auto py-1.5 sm:py-1.5`}
-                value={pickOf(g)}
-                onChange={(e) => setPicks((p) => ({ ...p, [g.id]: e.target.value }))}
+                value={pickOf(g, picks)}
+                onChange={(e) => choose(g.id, e.target.value)}
               >
                 {g.choices.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -104,6 +125,7 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
             <label key={o.id} className="inline-flex cursor-pointer items-center gap-2">
               <input type="checkbox" className="size-4 accent-brand" checked={optionIds.includes(o.id)} onChange={() => toggle(o.id)} />
               {o.name}
+              {!hasLines(o.id) && <span className="text-xs text-muted">(no lines yet, adds nothing)</span>}
             </label>
           ))}
         </fieldset>

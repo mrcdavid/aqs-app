@@ -11,14 +11,15 @@ import {
   PackagePlus,
   Phone,
   Store,
+  Trash2,
   UserRound,
   X,
   XCircle,
 } from 'lucide-react'
 import { useState } from 'react'
-import { useLoaderData, useRevalidator } from 'react-router'
+import { useLoaderData, useNavigate, useRevalidator } from 'react-router'
 
-import { adminApi } from '../../api/admin'
+import { adminApi, type AdminQuotationItem } from '../../api/admin'
 import { Badge, QuotationStatusBadge } from '../../components/ui/Badge'
 import { Button, ButtonAnchor } from '../../components/ui/Button'
 import { Card, ErrorBanner, PageHeader } from '../../components/ui/Card'
@@ -32,13 +33,36 @@ import type { adminQuotationDetailLoader } from './loaders'
 type Review = 'approve' | 'reject' | 'cancel'
 
 export function AdminQuotationDetailPage() {
-  const { quotation: q } = useLoaderData<typeof adminQuotationDetailLoader>()
+  const { quotation: q, me } = useLoaderData<typeof adminQuotationDetailLoader>()
   const { revalidate } = useRevalidator()
+  const navigate = useNavigate()
   const [review, setReview] = useState<Review | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const money = (v: string) => formatMoney(v, q.currency)
-  const b = q.breakdown
   const hasPdf = q.status === 'pending' || q.status === 'approved'
   const who = q.walk_in ? 'client' : 'customer'
+
+  async function remove() {
+    const ok = await confirmAction({
+      title: 'Delete this quotation?',
+      message: `${q.number ?? 'This request'} for ${q.customer.full_name} (${q.status}) will disappear from every list, the dashboard${
+        q.walk_in ? '' : " and the customer's account"
+      }. It stays in the database and the audit log.`,
+      confirmLabel: 'Yes, delete it',
+      cancelLabel: 'No',
+      tone: 'danger',
+    })
+    if (!ok) return
+    setDeleting(true)
+    try {
+      await adminApi.deleteQuotation(q.id)
+      toast.success('Quotation deleted.')
+      navigate('/admin/quotations')
+    } catch (err) {
+      toast.error(messageOf(err))
+      setDeleting(false)
+    }
+  }
 
   return (
     <>
@@ -68,6 +92,11 @@ export function AdminQuotationDetailPage() {
               >
                 {q.status === 'approved' ? 'Official PDF' : 'Draft PDF'}
               </ButtonAnchor>
+            )}
+            {me.role === 'super_admin' && (
+              <Button variant="danger-soft" icon={Trash2} loading={deleting} onClick={remove} className="flex-1 sm:flex-none">
+                Delete
+              </Button>
             )}
             {q.status === 'pending' && (
               <>
@@ -127,33 +156,54 @@ export function AdminQuotationDetailPage() {
             )}
           </ul>
         </Card>
-        <Card title="Request" icon={Package}>
-          <ul className="space-y-2 text-sm">
-            <li className="font-medium">{q.product_name}</li>
-            {q.choices.map((c) => (
-              <li key={c.group}>
-                <span className="text-muted">{c.group}:</span> {c.name}
+        <Card title={q.items.length === 1 ? 'Item' : `Items (${q.items.length})`} icon={Package}>
+          <ol className="space-y-3 text-sm">
+            {q.items.map((item, i) => (
+              <li key={item.position} className="flex gap-3">
+                <span className="grid size-6 shrink-0 place-items-center rounded-full bg-brand-soft text-xs font-semibold text-brand">
+                  {i + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex justify-between gap-3">
+                    <span className="font-medium">{item.product_name}</span>
+                    <span className="font-medium tabular-nums">{money(item.amount)}</span>
+                  </div>
+                  <p className="text-muted">
+                    {trimDecimal(item.input_width)} × {trimDecimal(item.input_height)} {item.input_unit} ({item.width_mm} ×{' '}
+                    {item.height_mm} mm) · qty {item.quantity}
+                  </p>
+                  {item.choices.map((c) => (
+                    <p key={c.group}>
+                      <span className="text-muted">{c.group}:</span> {c.name}
+                    </p>
+                  ))}
+                  {item.options.length > 0 && (
+                    <p className="flex items-center gap-1.5">
+                      <PackagePlus className="size-4 shrink-0 text-brand" aria-hidden />
+                      With: {item.options.join(', ')}
+                    </p>
+                  )}
+                </div>
               </li>
             ))}
-            {q.options.length > 0 && (
-              <li className="flex items-center gap-1.5">
-                <PackagePlus className="size-4 shrink-0 text-brand" aria-hidden />
-                With: {q.options.join(', ')}
-              </li>
-            )}
-            <li>
-              {trimDecimal(q.input_width)} × {trimDecimal(q.input_height)} {q.input_unit}{' '}
-              <span className="text-muted">
-                ({q.width_mm} × {q.height_mm} mm)
-              </span>
-            </li>
-            <li>Quantity {q.quantity}</li>
-          </ul>
+          </ol>
+          {q.total_adjusted && (
+            <dl className="mt-4 space-y-1 border-t border-line pt-3 text-sm tabular-nums">
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted">Items total</dt>
+                <dd>{money(q.subtotal)}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted">Adjusted on approval</dt>
+                <dd>
+                  {Number(q.adjustment) > 0 ? '+ ' : '- '}
+                  {money(q.adjustment.replace('-', ''))}
+                </dd>
+              </div>
+            </dl>
+          )}
           <div className="bg-brand-gradient mt-4 flex items-center justify-between rounded-xl px-4 py-3 text-white">
-            <span className="text-sm">
-              Quoted amount
-              {q.total_adjusted && <span className="block text-xs text-white/80">Adjusted from {money(b.rounded_total)}</span>}
-            </span>
+            <span className="text-sm">Quoted amount</span>
             <span className="text-lg font-semibold tabular-nums">{money(q.total)}</span>
           </div>
           <dl className="mt-3 space-y-1.5 text-sm tabular-nums">
@@ -169,85 +219,19 @@ export function AdminQuotationDetailPage() {
         </Card>
       </div>
 
-      <Card title="Internal cost breakdown" icon={Calculator}>
-        <p className="mb-3 text-sm text-muted">
-          Prices frozen when the quotation was processed. The {who} only sees the quoted amount (VAT included, not shown)
-          and the 50/50 payment split.
-        </p>
-        <div className="overflow-x-auto rounded-xl border border-line">
-          <table className="w-full text-left text-sm tabular-nums">
-            <thead className="bg-surface-2 text-xs tracking-wide text-muted uppercase">
-              <tr>
-                <th className="px-3 py-2 font-medium">Line</th>
-                <th className="px-3 py-2 font-medium">Measured by</th>
-                <th className="px-3 py-2 text-right font-medium">Qty</th>
-                <th className="px-3 py-2 text-right font-medium">Price</th>
-                <th className="px-3 py-2 text-right font-medium">Cost</th>
-              </tr>
-            </thead>
-            <tbody>
-              {b.lines.map((l, i) => (
-                <tr key={i} className="border-t border-line">
-                  <td className="px-3 py-2">
-                    {l.label || l.name} <span className="font-mono text-xs text-muted">{l.code}</span>{' '}
-                    {l.option && (
-                      <Badge tone="brand" icon={PackagePlus}>
-                        {l.option}
-                      </Badge>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-muted">
-                    {BASIS_LABEL[l.basis]}
-                    {l.width_mm !== null && (l.width_mm !== b.width_mm || l.height_mm !== b.height_mm) && (
-                      <span className="block text-xs">
-                        at {l.width_mm} × {l.height_mm} mm
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right">{trimDecimal(l.quantity)}</td>
-                  <td className="px-3 py-2 text-right whitespace-nowrap">
-                    {money(l.unit_price)} <span className="text-muted">{UNIT_LABEL[l.unit]}</span>
-                  </td>
-                  <td className="px-3 py-2 text-right">{money(l.cost)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <dl className="mt-4 ml-auto max-w-sm space-y-1.5 text-sm tabular-nums">
-          {[
-            ['Cost per piece', b.unit_subtotal],
-            [`Customer unit price (+${trimDecimal(b.markup_percent)}% markup)`, b.unit_price],
-            [`Cost × ${b.quantity}`, b.subtotal],
-            ['Markup', b.markup],
-            [`Subtotal (unit price × ${b.quantity})`, b.net],
-            [`VAT ${trimDecimal(b.vat_percent)}%`, b.vat],
-            ['Total incl. VAT', b.total],
-            [`Rounded up to the next ${trimDecimal(b.rounding_step)}`, b.rounding],
-          ].map(([label, value]) => (
-            <div key={label} className="flex justify-between gap-4">
-              <dt className="text-muted">{label}</dt>
-              <dd>{money(value)}</dd>
-            </div>
-          ))}
-          <div className="flex justify-between gap-4 border-t border-line pt-2 text-base font-semibold">
-            <dt>Calculated price</dt>
-            <dd>{money(b.rounded_total)}</dd>
-          </div>
-          {q.total_adjusted && (
-            <div className="flex justify-between gap-4 text-base font-semibold text-brand">
-              <dt>Adjusted on approval</dt>
-              <dd>{money(q.total)}</dd>
-            </div>
-          )}
-        </dl>
-      </Card>
+      <p className="text-sm text-muted">
+        Prices below were frozen when the quotation was processed. The {who} only sees each item&apos;s amount and the
+        total (VAT included, not shown), and the 50/50 payment split.
+      </p>
+      {q.items.map((item, i) => (
+        <ItemBreakdown key={item.position} item={item} title={q.items.length === 1 ? 'Internal cost breakdown' : `Cost breakdown · item ${i + 1}: ${item.product_name}`} money={money} />
+      ))}
 
       <ReviewModal
         review={review}
         total={q.total}
         currency={q.currency}
-        calculated={money(b.rounded_total)}
+        calculated={money(q.subtotal)}
         customer={q.customer.full_name}
         walkIn={q.walk_in}
         onClose={() => setReview(null)}
@@ -271,6 +255,76 @@ export function AdminQuotationDetailPage() {
         }}
       />
     </>
+  )
+}
+
+/** One item's frozen cost breakdown: lines, markup, VAT and rounding (staff only). */
+function ItemBreakdown({ item, title, money }: { item: AdminQuotationItem; title: string; money: (v: string) => string }) {
+  const b = item.breakdown
+  return (
+    <Card title={title} icon={Calculator}>
+      <div className="overflow-x-auto rounded-xl border border-line">
+        <table className="w-full text-left text-sm tabular-nums">
+          <thead className="bg-surface-2 text-xs tracking-wide text-muted uppercase">
+            <tr>
+              <th className="px-3 py-2 font-medium">Line</th>
+              <th className="px-3 py-2 font-medium">Measured by</th>
+              <th className="px-3 py-2 text-right font-medium">Qty</th>
+              <th className="px-3 py-2 text-right font-medium">Price</th>
+              <th className="px-3 py-2 text-right font-medium">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {b.lines.map((l, i) => (
+              <tr key={i} className="border-t border-line">
+                <td className="px-3 py-2">
+                  {l.label || l.name} <span className="font-mono text-xs text-muted">{l.code}</span>{' '}
+                  {l.option && (
+                    <Badge tone="brand" icon={PackagePlus}>
+                      {l.option}
+                    </Badge>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-muted">
+                  {BASIS_LABEL[l.basis]}
+                  {l.width_mm !== null && (l.width_mm !== b.width_mm || l.height_mm !== b.height_mm) && (
+                    <span className="block text-xs">
+                      at {l.width_mm} × {l.height_mm} mm
+                    </span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right">{trimDecimal(l.quantity)}</td>
+                <td className="px-3 py-2 text-right whitespace-nowrap">
+                  {money(l.unit_price)} <span className="text-muted">{UNIT_LABEL[l.unit]}</span>
+                </td>
+                <td className="px-3 py-2 text-right">{money(l.cost)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <dl className="mt-4 ml-auto max-w-sm space-y-1.5 text-sm tabular-nums">
+        {[
+          ['Cost per piece', b.unit_subtotal],
+          [`Customer unit price (+${trimDecimal(b.markup_percent)}% markup)`, b.unit_price],
+          [`Cost × ${b.quantity}`, b.subtotal],
+          ['Markup', b.markup],
+          [`Subtotal (unit price × ${b.quantity})`, b.net],
+          [`VAT ${trimDecimal(b.vat_percent)}%`, b.vat],
+          ['Total incl. VAT', b.total],
+          [`Rounded up to the next ${trimDecimal(b.rounding_step)}`, b.rounding],
+        ].map(([label, value]) => (
+          <div key={label} className="flex justify-between gap-4">
+            <dt className="text-muted">{label}</dt>
+            <dd>{money(value)}</dd>
+          </div>
+        ))}
+        <div className="flex justify-between gap-4 border-t border-line pt-2 text-base font-semibold">
+          <dt>Item amount</dt>
+          <dd>{money(item.amount)}</dd>
+        </div>
+      </dl>
+    </Card>
   )
 }
 

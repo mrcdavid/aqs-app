@@ -4,7 +4,7 @@ import { Link, useLoaderData } from 'react-router'
 import { QuotationStatusBadge } from '../../components/ui/Badge'
 import { ButtonLink } from '../../components/ui/Button'
 import { Card, EmptyState, PageHeader } from '../../components/ui/Card'
-import { formatDate, formatMoney } from '../../lib/format'
+import { formatDate, formatMoney, itemsDetail, itemsTitle } from '../../lib/format'
 import type { quotationsLoader } from './loader'
 
 export function QuotationsPage() {
@@ -44,9 +44,9 @@ export function QuotationsPage() {
                     <FileText className="size-5" aria-hidden />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium">{q.product_name}</p>
+                    <p className="truncate font-medium">{itemsTitle(q.items)}</p>
                     <p className="truncate text-sm text-muted">
-                      {q.width_mm} × {q.height_mm} mm · qty {q.quantity} · {formatDate(q.created_at)}
+                      {itemsDetail(q.items)} · {formatDate(q.created_at)}
                     </p>
                     {q.number && <p className="font-mono text-xs text-muted">{q.number}</p>}
                   </div>

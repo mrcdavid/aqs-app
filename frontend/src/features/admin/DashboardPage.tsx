@@ -2,8 +2,8 @@ import {
   ArrowRight,
   BadgeCheck,
   CalendarRange,
+  Calculator,
   Clock,
-  FileText,
   LayoutDashboard,
   MapPin,
   Package,
@@ -52,11 +52,11 @@ function Stat({ label, value, hint, icon: Icon, featured = false }: { label: str
 }
 
 function GroupTable({ title, icon, rows, currency }: { title: string; icon: LucideIcon; rows: GroupRow[]; currency: string }) {
-  const max = Math.max(1, ...rows.map((r) => r.requested))
+  const max = Math.max(1, ...rows.map((r) => Number(r.approved_value)))
   return (
     <Card title={title} icon={icon}>
       {rows.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted">No requests in this period.</p>
+        <p className="py-6 text-center text-sm text-muted">No approved quotations in this period.</p>
       ) : (
         <ul className="space-y-3">
           {rows.map((r) => (
@@ -67,10 +67,10 @@ function GroupTable({ title, icon, rows, currency }: { title: string; icon: Luci
               </div>
               <div className="mt-1 flex items-center gap-3">
                 <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-2" aria-hidden>
-                  <div className="bg-brand-gradient h-full rounded-full" style={{ width: `${(r.requested / max) * 100}%` }} />
+                  <div className="bg-brand-gradient h-full rounded-full" style={{ width: `${(Number(r.approved_value) / max) * 100}%` }} />
                 </div>
-                <span className="w-32 shrink-0 text-right text-xs text-muted tabular-nums">
-                  {r.requested} requests · {r.approved} approved
+                <span className="w-24 shrink-0 text-right text-xs text-muted tabular-nums">
+                  {r.approved} approved
                 </span>
               </div>
             </li>
@@ -92,7 +92,7 @@ export function DashboardPage() {
       <PageHeader
         title="Dashboard"
         icon={LayoutDashboard}
-        description={`Welcome back, ${me?.email ?? ''}. Figures count requests made ${formatDate(d.date_from)} – ${formatDate(d.date_to)}.`}
+        description={`Welcome back, ${me?.email ?? ''}. Figures count approved quotations requested ${formatDate(d.date_from)} – ${formatDate(d.date_to)}.`}
       />
 
       <Card>
@@ -127,7 +127,12 @@ export function DashboardPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat featured icon={Wallet} label="Approved value" value={money(d.approved_value)} hint={`${d.approved} approved quotation${d.approved === 1 ? '' : 's'}`} />
-        <Stat icon={FileText} label="Requests" value={String(d.requested)} hint={`${d.pending} still pending`} />
+        <Stat
+          icon={Calculator}
+          label="Average quotation"
+          value={d.average_value === null ? '—' : money(d.average_value)}
+          hint="Per approved quotation"
+        />
         <Stat
           icon={BadgeCheck}
           label="Approval rate"

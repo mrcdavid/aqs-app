@@ -18,6 +18,9 @@ htmlcov/
 backend/storage/quotes/*
 !backend/storage/quotes/.gitkeep
 
+# graphify knowledge-graph output
+graphify-out/
+
 # Node / frontend
 node_modules/
 dist/

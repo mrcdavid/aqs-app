@@ -11,12 +11,12 @@ import { Card, EmptyState, ErrorBanner, PageHeader } from '../../components/ui/C
 import { Field, inputClass, RequiredNote } from '../../components/ui/Field'
 import { messageOf } from '../../lib/errors'
 import { toast } from '../../stores/feedback'
-import { EMPTY_QUOTE_ITEM, missingChoice, quoteItemSchema, sizeErrors, toRequest } from '../quotations/quoteItem'
-import { ProductStep, SizeStep, Step } from '../quotations/QuoteItemFields'
+import { checkItems, EMPTY_QUOTE_FORM, quoteFormSchema, toRequest } from '../quotations/quoteItem'
+import { QuoteItems, Step } from '../quotations/QuoteItemFields'
 import type { adminNewQuotationLoader } from './loaders'
 import { EMPTY_WALK_IN_CLIENT, walkInClientSchema } from './schemas'
 
-const schema = quoteItemSchema.extend({ client: walkInClientSchema })
+const schema = quoteFormSchema.extend({ client: walkInClientSchema })
 type FormValues = z.input<typeof schema>
 
 /** Staff quote a walk-in or phone client who has no account. Priced and approved like any request. */
@@ -27,7 +27,7 @@ export function AdminNewQuotationPage() {
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { ...EMPTY_QUOTE_ITEM, client: EMPTY_WALK_IN_CLIENT },
+    defaultValues: { ...EMPTY_QUOTE_FORM, client: EMPTY_WALK_IN_CLIENT },
   })
   const { register, handleSubmit, setError: setFieldError, formState } = form
   const { isSubmitting } = formState
@@ -35,21 +35,17 @@ export function AdminNewQuotationPage() {
 
   async function onSubmit(values: FormValues) {
     setError(null)
-    const product = products.find((p) => p.id === values.product_id)
-    if (!product) return
-    const sizes = sizeErrors(values, product)
-    if (sizes.width) setFieldError('width', { message: sizes.width })
-    if (sizes.height) setFieldError('height', { message: sizes.height })
-    if (sizes.width || sizes.height) return
-    const missing = missingChoice(values, product)
-    if (missing) {
-      setError(`Choose an option for ${missing}.`)
-      return
+    const issues = checkItems(values.items, products)
+    for (const issue of issues) {
+      if (issue.field) setFieldError(`items.${issue.index}.${issue.field}`, { message: issue.message })
     }
-    const { client, ...item } = schema.parse(values)
+    const general = issues.find((i) => !i.field)
+    if (general) setError(general.message)
+    if (issues.length > 0) return
+    const { client, items } = schema.parse(values)
     try {
       const created = await adminApi.createQuotation({
-        ...toRequest(item, product),
+        ...toRequest(items, products),
         client: { ...client, email: client.email || null },
       })
       toast.success(`Estimate ready for ${client.full_name}. Check the amount, then approve to issue it.`)
@@ -124,8 +120,7 @@ export function AdminNewQuotationPage() {
               </Field>
             </div>
           </Step>
-          <ProductStep n={2} products={products} />
-          <SizeStep n={3} products={products} />
+          <QuoteItems products={products} />
         </fieldset>
 
         <div className="flex justify-end gap-3">

@@ -71,8 +71,13 @@ async def customer(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> Asyn
     return client
 
 
+def one(product_id: str, **overrides: Any) -> dict[str, Any]:
+    """A request body with one item."""
+    return {"items": [{"product_id": product_id, **REQUEST, **overrides}]}
+
+
 async def request_quote(c: AsyncClient, product_id: str, **overrides: Any) -> dict[str, Any]:
-    r = await c.post(f"{API}/quotations", json={"product_id": product_id, **REQUEST, **overrides})
+    r = await c.post(f"{API}/quotations", json=one(product_id, **overrides))
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -86,12 +91,14 @@ async def test_full_flow(customer: AsyncClient, admin: AsyncClient, product_id: 
 
     q = await request_quote(customer, product_id)
     assert q["status"] == "pending" and q["number"] is None
-    assert (q["width_mm"], q["height_mm"], q["quantity"]) == (1200, 1000, 2)
-    assert q["total"] == "12000.00"  # 11,977.19 rounded up to the next 100
+    item = q["items"][0]
+    assert (item["width_mm"], item["height_mm"], item["quantity"]) == (1200, 1000, 2)
+    assert item["amount"] == "12000.00"  # 11,977.19 rounded up to the next 100
+    assert q["total"] == q["subtotal"] == "12000.00" and q["adjustment"] == "0.00"
     assert (q["downpayment"], q["balance"]) == ("6000.00", "6000.00")
-    assert len(q["includes"]) == 5
-    for hidden in ("markup", "breakdown", "vat", "vat_percent", "unit_price", "amount"):
-        assert hidden not in q  # customers never see costs, VAT or unit prices
+    assert len(item["includes"]) == 5
+    for hidden in ("markup", "breakdown", "vat", "vat_percent", "unit_price"):
+        assert hidden not in q and hidden not in item  # never costs, VAT or unit prices
 
     draft = await customer.get(f"{API}/quotations/{q['id']}/pdf")
     assert draft.status_code == 200 and draft.headers["content-type"] == "application/pdf"
@@ -106,8 +113,9 @@ async def test_full_flow(customer: AsyncClient, admin: AsyncClient, product_id: 
     approved = r.json()
     year = today_pht().year
     assert approved["number"] == f"AQS-{year}-000001"
-    assert approved["breakdown"]["markup"] == "1782.32"  # admins see the full breakdown
-    assert approved["breakdown"]["total"] == "11977.19"
+    breakdown = approved["items"][0]["breakdown"]
+    assert breakdown["markup"] == "1782.32"  # admins see the full breakdown
+    assert breakdown["total"] == "11977.19"
     assert approved["total"] == "12000.00" and approved["total_adjusted"] is False
     assert approved["walk_in"] is False and approved["created_by_email"] == CUSTOMER_EMAIL
     assert date.fromisoformat(approved["valid_until"]) == today_pht() + timedelta(days=30)
@@ -139,8 +147,9 @@ async def test_numbers_increment(customer: AsyncClient, admin: AsyncClient, prod
 
 async def test_inch_input(customer: AsyncClient, product_id: str):
     q = await request_quote(customer, product_id, width="48", height="36", unit="in", quantity=1)
-    assert (q["width_mm"], q["height_mm"]) == (1219, 914)
-    assert (q["input_width"], q["input_unit"]) == ("48.00", "in")
+    item = q["items"][0]
+    assert (item["width_mm"], item["height_mm"]) == (1219, 914)
+    assert (item["input_width"], item["input_unit"]) == ("48.00", "in")
 
 
 # ---------- prices are frozen ----------
@@ -165,7 +174,7 @@ async def test_later_price_change_does_not_alter_quote(
 async def test_profile_required(client: AsyncClient, monkeypatch, product_id: str):
     fake_google(monkeypatch)
     await client.get(f"{API}/auth/google/callback")
-    r = await client.post(f"{API}/quotations", json={"product_id": product_id, **REQUEST})
+    r = await client.post(f"{API}/quotations", json=one(product_id))
     assert r.status_code == 409 and "profile" in r.json()["detail"]
 
 
@@ -175,7 +184,7 @@ async def test_archived_items_hide_product(
     materials = (await admin.get(f"{API}/admin/materials")).json()
     await admin.patch(f"{API}/admin/materials/{materials[0]['id']}", json={"is_active": False})
     assert (await customer.get(f"{API}/catalog/products")).json() == []
-    r = await customer.post(f"{API}/quotations", json={"product_id": product_id, **REQUEST})
+    r = await customer.post(f"{API}/quotations", json=one(product_id))
     assert r.status_code == 404
 
 
@@ -183,14 +192,12 @@ async def test_archived_product_is_not_quotable(
     customer: AsyncClient, admin: AsyncClient, product_id: str
 ):
     await admin.patch(f"{API}/admin/products/{product_id}", json={"is_active": False})
-    r = await customer.post(f"{API}/quotations", json={"product_id": product_id, **REQUEST})
+    r = await customer.post(f"{API}/quotations", json=one(product_id))
     assert r.status_code == 404
 
 
 async def test_size_out_of_range(customer: AsyncClient, product_id: str):
-    r = await customer.post(
-        f"{API}/quotations", json={"product_id": product_id, **REQUEST, "width": "5000"}
-    )
+    r = await customer.post(f"{API}/quotations", json=one(product_id, width="5000"))
     assert r.status_code == 422 and "width must be" in r.json()["detail"]
 
 
@@ -198,14 +205,14 @@ async def test_size_out_of_range(customer: AsyncClient, product_id: str):
     "bad", [{"width": "0"}, {"unit": "ft"}, {"quantity": 0}, {"quantity": 101}, {"total": "1"}]
 )
 async def test_request_validation(customer: AsyncClient, product_id: str, bad: dict[str, Any]):
-    r = await customer.post(f"{API}/quotations", json={"product_id": product_id, **REQUEST, **bad})
+    r = await customer.post(f"{API}/quotations", json=one(product_id, **bad))
     assert r.status_code == 422
 
 
 async def test_pending_limit(customer: AsyncClient, product_id: str, monkeypatch):
     monkeypatch.setattr(get_settings(), "max_pending_quotations", 1)
     await request_quote(customer, product_id)
-    r = await customer.post(f"{API}/quotations", json={"product_id": product_id, **REQUEST})
+    r = await customer.post(f"{API}/quotations", json=one(product_id))
     assert r.status_code == 409 and "too many" in r.json()["detail"]
 
 
@@ -231,7 +238,7 @@ async def test_roles_are_enforced(customer: AsyncClient, admin: AsyncClient, pro
     q = await request_quote(customer, product_id)
     r = await customer.post(f"{API}/admin/quotations/{q['id']}/approve", json={})
     assert r.status_code == 403
-    r = await admin.post(f"{API}/quotations", json={"product_id": product_id, **REQUEST})
+    r = await admin.post(f"{API}/quotations", json=one(product_id))
     assert r.status_code == 403
 
 
@@ -307,7 +314,16 @@ async def test_pdf_shows_one_amount_payment_terms_and_signatures(
         assert b"50% DOWNPAYMENT" in pdf and b"50% UPON COMPLETION AND INSTALLATION" in pdf
         assert b"6,000.00" in pdf
         assert b"Cleo David" in pdf and b"Juan Dela Cruz" in pdf  # owner and client signatures
-        for hidden in (b"VAT", b"1,283.27", b"11,977.19", b"5,346.96"):
+        # No VAT, exact total or unit price, and no materials or labour (e.g. "GL-6MM item").
+        for hidden in (
+            b"VAT",
+            b"1,283.27",
+            b"11,977.19",
+            b"5,346.96",
+            b"Includes",
+            b"GL-6MM",
+            b"Installation",
+        ):
             assert hidden not in pdf  # no VAT, exact total or unit price
 
 
@@ -322,7 +338,8 @@ async def test_approve_with_adjusted_total(
     assert r.status_code == 200, r.text
     approved = r.json()
     assert approved["total"] == "12500.00" and approved["total_adjusted"] is True
-    assert approved["breakdown"]["rounded_total"] == "12000.00"  # the calculation is kept
+    assert approved["subtotal"] == "12000.00" and approved["adjustment"] == "500.00"
+    assert approved["items"][0]["amount"] == "12000.00"  # the calculation is kept
 
     mine = (await customer.get(f"{API}/quotations/{q['id']}")).json()
     assert (mine["total"], mine["downpayment"], mine["balance"]) == (
@@ -362,7 +379,7 @@ CLIENT = {
 
 
 async def staff_quote(c: AsyncClient, product_id: str, **client: Any) -> dict[str, Any]:
-    body = {"product_id": product_id, **REQUEST, "client": {**CLIENT, **client}}
+    body = {**one(product_id), "client": {**CLIENT, **client}}
     r = await c.post(f"{API}/admin/quotations", json=body)
     assert r.status_code == 201, r.text
     return r.json()
@@ -377,7 +394,7 @@ async def test_staff_quotes_walk_in_client(admin: AsyncClient, product_id: str, 
     assert q["customer"]["full_name"] == "Maria Santos" and q["customer"]["email"] == ""
     assert q["customer"]["contact_number"] == "09171234567"  # spaces removed
     assert q["created_by_email"] == STAFF_EMAIL
-    assert q["total"] == "12000.00" and q["breakdown"]["total"] == "11977.19"
+    assert q["total"] == "12000.00" and q["items"][0]["breakdown"]["total"] == "11977.19"
 
     listed = (await admin.get(f"{API}/admin/quotations", params={"status": "pending"})).json()
     assert [(x["id"], x["walk_in"], x["customer_city"]) for x in listed] == [
@@ -402,7 +419,7 @@ async def test_walk_in_email_is_optional_but_checked(admin: AsyncClient, product
         "email"
     ] == ""  # blank = none
     for bad in ("not-an-email", "maria@", "maria@example"):
-        body = {"product_id": product_id, **REQUEST, "client": {**CLIENT, "email": bad}}
+        body = {**one(product_id), "client": {**CLIENT, "email": bad}}
         assert (await admin.post(f"{API}/admin/quotations", json=body)).status_code == 422
 
 
@@ -421,12 +438,12 @@ async def test_walk_in_email_is_optional_but_checked(admin: AsyncClient, product
     ],
 )
 async def test_walk_in_client_validation(admin: AsyncClient, product_id: str, bad: dict[str, Any]):
-    body = {"product_id": product_id, **REQUEST, "client": {**CLIENT, **bad}}
+    body = {**one(product_id), "client": {**CLIENT, **bad}}
     assert (await admin.post(f"{API}/admin/quotations", json=body)).status_code == 422
 
 
 async def test_walk_in_size_rules_apply(admin: AsyncClient, product_id: str):
-    body = {"product_id": product_id, **REQUEST, "width": "5000", "client": CLIENT}
+    body = {**one(product_id, width="5000"), "client": CLIENT}
     r = await admin.post(f"{API}/admin/quotations", json=body)
     assert r.status_code == 422 and "width must be" in r.json()["detail"]
 
@@ -434,7 +451,7 @@ async def test_walk_in_size_rules_apply(admin: AsyncClient, product_id: str):
 async def test_only_staff_quote_for_others(
     customer: AsyncClient, admin: AsyncClient, product_id: str
 ):
-    body = {"product_id": product_id, **REQUEST, "client": CLIENT}
+    body = {**one(product_id), "client": CLIENT}
     assert (await customer.post(f"{API}/admin/quotations", json=body)).status_code == 403
     await staff_quote(admin, product_id)
     assert (await customer.get(f"{API}/quotations")).json() == []  # not in anyone's account
@@ -461,10 +478,11 @@ async def test_add_on_is_offered_and_priced(
     ]
 
     plain = await request_quote(customer, product_id)
-    assert plain["total"] == "12000.00" and plain["options"] == []
+    assert plain["total"] == "12000.00" and plain["items"][0]["options"] == []
     extra = await request_quote(customer, product_id, option_ids=[open_back_id])
-    assert extra["total"] == "16800.00" and extra["options"] == ["Open back aluminum"]
-    assert len(extra["includes"]) == 5  # always-included parts; the add-on is listed separately
+    assert extra["total"] == "16800.00"
+    assert extra["items"][0]["options"] == ["Open back aluminum"]
+    assert len(extra["items"][0]["includes"]) == 5  # the add-on is listed separately
 
     monkeypatch.setattr(reportlab.rl_config, "pageCompression", 0)
     pdf = (await customer.get(f"{API}/quotations/{extra['id']}/pdf")).content
@@ -477,15 +495,16 @@ async def test_admin_sees_add_on_lines(
 ):
     q = await request_quote(customer, product_id, option_ids=[open_back_id])
     detail = (await admin.get(f"{API}/admin/quotations/{q['id']}")).json()
-    options = [line["option"] for line in detail["breakdown"]["lines"]]
+    options = [line["option"] for line in detail["items"][0]["breakdown"]["lines"]]
     assert options.count("Open back aluminum") == 2 and options.count("") == 5
 
 
 async def test_walk_in_quote_with_add_on(admin: AsyncClient, product_id: str, open_back_id: str):
-    body = {"product_id": product_id, **REQUEST, "option_ids": [open_back_id], "client": CLIENT}
+    body = {**one(product_id, option_ids=[open_back_id]), "client": CLIENT}
     r = await admin.post(f"{API}/admin/quotations", json=body)
     assert r.status_code == 201, r.text
-    assert r.json()["options"] == ["Open back aluminum"] and r.json()["total"] == "16800.00"
+    assert r.json()["items"][0]["options"] == ["Open back aluminum"]
+    assert r.json()["total"] == "16800.00"
 
 
 async def test_bad_add_ons_are_rejected(
@@ -496,10 +515,10 @@ async def test_bad_add_ons_are_rejected(
     for option_ids in ([str(uuid.uuid4())], [foreign]):
         r = await customer.post(
             f"{API}/quotations",
-            json={"product_id": product_id, **REQUEST, "option_ids": option_ids},
+            json=one(product_id, option_ids=option_ids),
         )
         assert r.status_code == 422 and r.json()["detail"] == "This option is not available"
-    twice = {"product_id": product_id, **REQUEST, "option_ids": [open_back_id, open_back_id]}
+    twice = one(product_id, option_ids=[open_back_id, open_back_id])
     assert (await customer.post(f"{API}/quotations", json=twice)).status_code == 422
 
 
@@ -512,7 +531,7 @@ async def test_archived_add_on_item_hides_only_the_add_on(
 
     catalog = (await customer.get(f"{API}/catalog/products")).json()
     assert [p["id"] for p in catalog] == [product_id] and catalog[0]["options"] == []
-    body = {"product_id": product_id, **REQUEST, "option_ids": [open_back_id]}
+    body = one(product_id, option_ids=[open_back_id])
     assert (await customer.post(f"{API}/quotations", json=body)).status_code == 422
     await request_quote(customer, product_id)  # the window itself can still be quoted
 

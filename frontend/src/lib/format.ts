@@ -41,6 +41,19 @@ export const PRODUCT_CATEGORY_LABEL: Record<ProductCategory, string> = {
   other: 'Other',
 }
 
+/** "Sliding window" or "Sliding window + 2 more" for a quotation's items. */
+export function itemsTitle(items: { product_name: string }[]): string {
+  const [first, ...rest] = items
+  return rest.length ? `${first.product_name} + ${rest.length} more` : first.product_name
+}
+
+/** "1200 × 1000 mm · qty 2" for one item, or "3 items · 5 pieces" for several. */
+export function itemsDetail(items: { width_mm: number; height_mm: number; quantity: number }[]): string {
+  if (items.length === 1) return `${items[0].width_mm} × ${items[0].height_mm} mm · qty ${items[0].quantity}`
+  const pieces = items.reduce((n, i) => n + i.quantity, 0)
+  return `${items.length} items · ${pieces} pieces`
+}
+
 /** Strip trailing zeros for display: "2.0000" -> "2", "1.2500" -> "1.25". */
 export function trimDecimal(value: string): string {
   return value.includes('.') ? value.replace(/\.?0+$/, '') : value

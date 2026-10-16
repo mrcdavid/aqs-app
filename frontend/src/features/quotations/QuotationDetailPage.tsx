@@ -109,36 +109,7 @@ export function QuotationDetailPage() {
 
       <Card>
         <div className="space-y-5">
-          <div>
-            <h2 className="text-lg font-semibold">{q.product_name}</h2>
-            {q.product_description && <p className="text-sm text-muted">{q.product_description}</p>}
-            <p className="mt-2 text-sm text-muted">Includes: {q.includes.join(', ')}</p>
-            {q.choices.map((c) => (
-              <p key={c.group} className="mt-1 text-sm">
-                <span className="text-muted">{c.group}:</span> <span className="font-medium">{c.name}</span>
-              </p>
-            ))}
-            {q.options.length > 0 && (
-              <p className="mt-1 flex items-center gap-1.5 text-sm font-medium">
-                <PackagePlus className="size-4 shrink-0 text-brand" aria-hidden />
-                With: {q.options.join(', ')}
-              </p>
-            )}
-          </div>
-
-          <dl className="grid gap-4 text-sm sm:grid-cols-3">
-            <div className="flex items-start gap-3">
-              <Ruler className="mt-0.5 size-4 text-muted" aria-hidden />
-              <div>
-                <dt className="text-muted">Size</dt>
-                <dd className="font-medium">
-                  {trimDecimal(q.input_width)} × {trimDecimal(q.input_height)} {q.input_unit}{' '}
-                  <span className="font-normal text-muted">
-                    ({q.width_mm} × {q.height_mm} mm)
-                  </span>
-                </dd>
-              </div>
-            </div>
+          <dl className="grid gap-4 text-sm sm:grid-cols-2">
             <div className="flex items-start gap-3">
               <CalendarDays className="mt-0.5 size-4 text-muted" aria-hidden />
               <div>
@@ -155,7 +126,60 @@ export function QuotationDetailPage() {
             </div>
           </dl>
 
-          <dl className="space-y-2 border-t border-line pt-4 text-sm tabular-nums">
+          <ol className="divide-y divide-line border-y border-line">
+            {q.items.map((item, i) => (
+              <li key={item.position} className="flex gap-3 py-4">
+                <span className="grid size-7 shrink-0 place-items-center rounded-full bg-brand-soft text-sm font-semibold text-brand">
+                  {i + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-4">
+                    <h2 className="font-semibold">{item.product_name}</h2>
+                    <span className="font-semibold tabular-nums">{money(item.amount)}</span>
+                  </div>
+                  {item.product_description && <p className="text-sm text-muted">{item.product_description}</p>}
+                  <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm">
+                    <Ruler className="size-4 text-muted" aria-hidden />
+                    <span className="font-medium">
+                      {trimDecimal(item.input_width)} × {trimDecimal(item.input_height)} {item.input_unit}
+                    </span>
+                    <span className="text-muted">
+                      ({item.width_mm} × {item.height_mm} mm) · qty {item.quantity}
+                    </span>
+                  </p>
+                  <p className="mt-1 text-sm text-muted">Includes: {item.includes.join(', ')}</p>
+                  {item.choices.map((c) => (
+                    <p key={c.group} className="mt-1 text-sm">
+                      <span className="text-muted">{c.group}:</span> <span className="font-medium">{c.name}</span>
+                    </p>
+                  ))}
+                  {item.options.length > 0 && (
+                    <p className="mt-1 flex items-center gap-1.5 text-sm font-medium">
+                      <PackagePlus className="size-4 shrink-0 text-brand" aria-hidden />
+                      With: {item.options.join(', ')}
+                    </p>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ol>
+
+          <dl className="space-y-2 text-sm tabular-nums">
+            {Number(q.adjustment) !== 0 && (
+              <>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-muted">Subtotal</dt>
+                  <dd>{money(q.subtotal)}</dd>
+                </div>
+                <div className="flex justify-between gap-4 pb-1">
+                  <dt className="text-muted">Adjustment</dt>
+                  <dd>
+                    {Number(q.adjustment) > 0 ? '+ ' : '- '}
+                    {money(q.adjustment.replace('-', ''))}
+                  </dd>
+                </div>
+              </>
+            )}
             <div className="bg-brand-gradient flex items-center justify-between gap-4 rounded-xl px-4 py-3 text-white">
               <dt className="font-medium">{q.status === 'approved' ? 'Total amount' : 'Estimated amount'}</dt>
               <dd className="text-xl font-semibold">{money(q.total)}</dd>

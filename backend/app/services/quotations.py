@@ -23,10 +23,13 @@ from app.models import (
     Product,
     ProductComponent,
     Profile,
+    Quotation,
+    QuotationItem,
     QuoteCounter,
     User,
 )
-from app.services.catalog import load_components, load_options
+from app.schemas.quotation import QuotationItemIn
+from app.services.catalog import check_dimensions, load_components, load_options
 from app.services.options import (
     OPTION_NOT_AVAILABLE,
     Offer,
@@ -36,7 +39,7 @@ from app.services.options import (
     pick,
     priced_lines,
 )
-from app.services.pricing import PriceBreakdown, compute_price, money
+from app.services.pricing import PriceBreakdown, compute_price, money, to_mm
 
 logger = logging.getLogger("aqs.quotations")
 
@@ -45,7 +48,8 @@ PHT = timezone(timedelta(hours=8), "PHT")
 # 2: pricing has rounding_step/rounding/rounded_total; customer email may be empty (walk-in).
 # 3: chosen add-ons in `options`; pricing lines carry `option` ("" = always included).
 # 4: chosen group choices in `choices`; pricing lines carry the size they were measured at.
-SNAPSHOT_VERSION = 4
+# 5: several items: product/input/pricing/choices/options moved to quotation_items.snapshot.
+SNAPSHOT_VERSION = 5
 DOWNPAYMENT_PERCENT = Decimal(50)
 
 
@@ -161,6 +165,11 @@ async def price_product(
     return breakdown, picked
 
 
+def not_deleted():  # noqa: ANN201 - SQLAlchemy expression
+    """Quotations a super admin hasn't deleted. Every quotation query filters with this."""
+    return Quotation.deleted_at.is_(None)
+
+
 def payment_split(total: Decimal) -> tuple[Decimal, Decimal]:
     """50% downpayment, 50% on completion and installation. The two always add up to total."""
     downpayment = money(total * DOWNPAYMENT_PERCENT / 100)
@@ -182,31 +191,87 @@ def customer_details(user: User, profile: Profile) -> dict[str, str]:
     }
 
 
-def build_snapshot(
+def quotation_snapshot(customer: dict[str, str]) -> dict[str, Any]:
+    """The quotation-level snapshot: who it's for. Business details are added on approval."""
+    return to_json({"version": SNAPSHOT_VERSION, "customer": customer})
+
+
+def item_snapshot(
     *,
-    customer: dict[str, str],
     product: Product,
     width: Decimal,
     height: Decimal,
     unit: str,
     breakdown: PriceBreakdown,
-    picked: Picked | None = None,
+    picked: Picked,
 ) -> dict[str, Any]:
     return to_json(
         {
-            "version": SNAPSHOT_VERSION,
             "product": {
                 "code": product.code,
                 "name": product.name,
                 "category": product.category,
                 "description": product.description,
             },
-            "customer": customer,
-            **(picked or Picked(choices=[], add_ons=[])).snapshot(),
+            **picked.snapshot(),
             "input": {"width": width, "height": height, "unit": unit},
             "pricing": breakdown.as_dict(),
         }
     )
+
+
+async def _price_item(
+    db: AsyncSession, settings: PricingSettings, position: int, body: QuotationItemIn
+) -> QuotationItem:
+    product = await db.get(Product, body.product_id)
+    if product is None:
+        raise NOT_AVAILABLE
+    width_mm, height_mm = to_mm(body.width, body.unit), to_mm(body.height, body.unit)
+    check_dimensions(product, width_mm, height_mm)
+    breakdown, picked = await price_product(
+        db,
+        product,
+        settings,
+        width_mm=width_mm,
+        height_mm=height_mm,
+        quantity=body.quantity,
+        option_ids=body.option_ids,
+    )
+    return QuotationItem(
+        position=position,
+        product_id=product.id,
+        product_name=product.name,
+        input_width=body.width,
+        input_height=body.height,
+        input_unit=body.unit,
+        width_mm=width_mm,
+        height_mm=height_mm,
+        quantity=body.quantity,
+        amount=breakdown.rounded_total,
+        snapshot=item_snapshot(
+            product=product,
+            width=body.width,
+            height=body.height,
+            unit=body.unit,
+            breakdown=breakdown,
+            picked=picked,
+        ),
+    )
+
+
+async def price_items(
+    db: AsyncSession, settings: PricingSettings, items: Sequence[QuotationItemIn]
+) -> list[QuotationItem]:
+    """Price every requested item; with several items, an error says which one it is about."""
+    result = []
+    for position, body in enumerate(items):
+        try:
+            result.append(await _price_item(db, settings, position, body))
+        except HTTPException as exc:
+            if len(items) == 1:
+                raise
+            raise HTTPException(exc.status_code, f"Item {position + 1}: {exc.detail}") from exc
+    return result
 
 
 def business_snapshot(settings: PricingSettings) -> dict[str, Any]:

@@ -14,7 +14,13 @@ from app.models.catalog import (
     ProductOption,
     ProductOptionGroup,
 )
-from app.models.quotation import Quotation, QuotationStatus, QuoteCounter
+from app.models.quotation import (
+    MAX_ITEMS,
+    Quotation,
+    QuotationItem,
+    QuotationStatus,
+    QuoteCounter,
+)
 from app.models.session import AuthSession
 from app.models.user import AuthProvider, Profile, Role, User
 
@@ -34,7 +40,9 @@ __all__ = [
     "ProductOption",
     "ProductOptionGroup",
     "Profile",
+    "MAX_ITEMS",
     "Quotation",
+    "QuotationItem",
     "QuotationStatus",
     "QuoteCounter",
     "Role",

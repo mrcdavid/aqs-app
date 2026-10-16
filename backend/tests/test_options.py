@@ -47,7 +47,7 @@ async def glass(admin: AsyncClient, product_id: str) -> dict[str, str]:
 
 
 def quote_body(product_id: str, **overrides: Any) -> dict[str, Any]:
-    return {"product_id": product_id, **REQUEST, **overrides}
+    return {"items": [{"product_id": product_id, **REQUEST, **overrides}]}
 
 
 # ---------- choose-one groups ----------
@@ -85,8 +85,9 @@ async def test_each_choice_has_its_own_price(
     reflective = await request_quote(customer, product_id, option_ids=[glass["Reflective"]])
     # 1.2 m² of glass per window, x2 windows, +20% markup, +12% VAT, rounded up to the next 100.
     assert (ordinary["total"], reflective["total"]) == ("13600.00", "14900.00")
-    assert reflective["choices"] == [{"group": "Glass type", "name": "Reflective"}]
-    assert reflective["options"] == [] and len(reflective["includes"]) == 5
+    item = reflective["items"][0]
+    assert item["choices"] == [{"group": "Glass type", "name": "Reflective"}]
+    assert item["options"] == [] and len(item["includes"]) == 5
 
     monkeypatch.setattr(reportlab.rl_config, "pageCompression", 0)
     pdf = (await customer.get(f"{API}/quotations/{reflective['id']}/pdf")).content
@@ -129,7 +130,7 @@ async def test_a_choice_may_have_no_lines(
     )
     none_id = detail["options"][0]["id"]
     q = await request_quote(customer, product_id, option_ids=[none_id])
-    assert q["choices"] == [{"group": "Grill", "name": "None"}]
+    assert q["items"][0]["choices"] == [{"group": "Grill", "name": "None"}]
     assert q["total"] == "12000.00"  # same as the plain window
 
 
@@ -144,13 +145,15 @@ async def test_open_back_makes_the_window_smaller(
 ):
     open_back = await add_open_back(admin, product_id, reduction_mm=100)
     q = await request_quote(customer, product_id, option_ids=[glass["Ordinary"], open_back["id"]])
-    lines = (await admin.get(f"{ADMIN}/quotations/{q['id']}")).json()["breakdown"]["lines"]
+    detail = (await admin.get(f"{ADMIN}/quotations/{q['id']}")).json()
+    lines = detail["items"][0]["breakdown"]["lines"]
     sizes = {(line["option"], line["width_mm"], line["height_mm"]) for line in lines}
     # The window and its glass sit inside the open back; the open back uses the full opening.
     assert sizes == {("", 1100, 900), ("Ordinary", 1100, 900), ("Open back aluminum", 1200, 1000)}
 
     plain = await request_quote(customer, product_id, option_ids=[glass["Ordinary"]])
-    lines = (await admin.get(f"{ADMIN}/quotations/{plain['id']}")).json()["breakdown"]["lines"]
+    detail = (await admin.get(f"{ADMIN}/quotations/{plain['id']}")).json()
+    lines = detail["items"][0]["breakdown"]["lines"]
     assert {(line["width_mm"], line["height_mm"]) for line in lines} == {(1200, 1000)}
 
 

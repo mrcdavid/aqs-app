@@ -4,7 +4,7 @@ import { Link, useLoaderData } from 'react-router'
 import { Badge, QuotationStatusBadge } from '../../components/ui/Badge'
 import { ButtonLink } from '../../components/ui/Button'
 import { Card, EmptyState, PageHeader } from '../../components/ui/Card'
-import { formatDate, formatMoney } from '../../lib/format'
+import { formatDate, formatMoney, itemsDetail, itemsTitle } from '../../lib/format'
 import type { adminQuotationsLoader } from './loaders'
 
 const TABS = [
@@ -78,7 +78,7 @@ export function AdminQuotationsPage() {
                       {q.number && <span className="font-mono text-xs text-muted">{q.number}</span>}
                     </div>
                     <p className="truncate text-sm text-muted">
-                      {q.product_name} · {q.width_mm} × {q.height_mm} mm · qty {q.quantity}
+                      {itemsTitle(q.items)} · {itemsDetail(q.items)}
                     </p>
                     <p className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-muted">
                       <span className="inline-flex items-center gap-1">

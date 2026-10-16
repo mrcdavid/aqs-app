@@ -4,6 +4,7 @@ Every query is scoped to the signed-in customer; another user's quotation looks 
 """
 
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import Response
@@ -12,7 +13,7 @@ from sqlalchemy import func, select
 from app.core.config import get_settings
 from app.core.deps import DB, CurrentUser, CustomerUser
 from app.core.rate_limit import limiter
-from app.models import Product, Profile, Quotation, QuotationStatus, User
+from app.models import Profile, Quotation, QuotationStatus, User
 from app.schemas.quotation import (
     CatalogChoiceGroupOut,
     CatalogOptionOut,
@@ -22,16 +23,15 @@ from app.schemas.quotation import (
     QuotationSummaryOut,
 )
 from app.services import audit
-from app.services.catalog import check_dimensions, get_pricing_settings
-from app.services.pricing import to_mm
+from app.services.catalog import get_pricing_settings
 from app.services.quotation_views import customer_view, pdf_response, summary
 from app.services.quotations import (
-    NOT_AVAILABLE,
-    build_snapshot,
     catalog_offers,
     customer_details,
-    price_product,
+    not_deleted,
+    price_items,
     quotable_products_query,
+    quotation_snapshot,
 )
 
 router = APIRouter(tags=["quotations"])
@@ -40,7 +40,9 @@ router = APIRouter(tags=["quotations"])
 async def _own_quotation(
     db: DB, user: User, quotation_id: uuid.UUID, *, lock: bool = False
 ) -> Quotation:
-    stmt = select(Quotation).where(Quotation.id == quotation_id, Quotation.user_id == user.id)
+    stmt = select(Quotation).where(
+        Quotation.id == quotation_id, Quotation.user_id == user.id, not_deleted()
+    )
     if lock:
         stmt = stmt.with_for_update()
     q = await db.scalar(stmt)
@@ -89,7 +91,11 @@ async def create_quotation(
     pending = await db.scalar(
         select(func.count())
         .select_from(Quotation)
-        .where(Quotation.user_id == user.id, Quotation.status == QuotationStatus.PENDING)
+        .where(
+            Quotation.user_id == user.id,
+            Quotation.status == QuotationStatus.PENDING,
+            not_deleted(),
+        )
     )
     if (pending or 0) >= get_settings().max_pending_quotations:
         raise HTTPException(
@@ -97,46 +103,19 @@ async def create_quotation(
             "You have too many pending quotations. Cancel some or wait for them to be reviewed.",
         )
 
-    product = await db.get(Product, body.product_id)
-    if product is None:
-        raise NOT_AVAILABLE
-    width_mm, height_mm = to_mm(body.width, body.unit), to_mm(body.height, body.unit)
-    check_dimensions(product, width_mm, height_mm)
     settings = await get_pricing_settings(db)
-    breakdown, picked = await price_product(
-        db,
-        product,
-        settings,
-        width_mm=width_mm,
-        height_mm=height_mm,
-        quantity=body.quantity,
-        option_ids=body.option_ids,
-    )
-
+    items = await price_items(db, settings, body.items)
+    total = sum((i.amount for i in items), Decimal(0))
     quotation = Quotation(
         user_id=user.id,
         created_by=user.id,
-        product_id=product.id,
         status=QuotationStatus.PENDING,
-        input_width=body.width,
-        input_height=body.height,
-        input_unit=body.unit,
-        width_mm=width_mm,
-        height_mm=height_mm,
-        quantity=body.quantity,
-        total=breakdown.rounded_total,
-        currency=breakdown.currency,
+        total=total,
+        currency=settings.currency,
         customer_city=profile.city,
         customer_province=profile.province,
-        snapshot=build_snapshot(
-            customer=customer_details(user, profile),
-            product=product,
-            width=body.width,
-            height=body.height,
-            unit=body.unit,
-            breakdown=breakdown,
-            picked=picked,
-        ),
+        snapshot=quotation_snapshot(customer_details(user, profile)),
+        items=items,
     )
     db.add(quotation)
     await db.flush()
@@ -147,11 +126,7 @@ async def create_quotation(
         actor_id=user.id,
         entity="quotation",
         entity_id=quotation.id,
-        details={
-            "product": product.code,
-            "options": [o.name for o in picked.options],
-            "total": str(breakdown.rounded_total),
-        },
+        details={"products": [i.product_name for i in items], "total": str(total)},
     )
     await db.commit()
     await db.refresh(quotation)
@@ -161,7 +136,9 @@ async def create_quotation(
 @router.get("/quotations")
 async def list_own_quotations(user: CustomerUser, db: DB) -> list[QuotationSummaryOut]:
     rows = await db.scalars(
-        select(Quotation).where(Quotation.user_id == user.id).order_by(Quotation.created_at.desc())
+        select(Quotation)
+        .where(Quotation.user_id == user.id, not_deleted())
+        .order_by(Quotation.created_at.desc())
     )
     return [summary(q) for q in rows]
 
