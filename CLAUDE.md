@@ -1,12 +1,12 @@
-v# CLAUDE.md — AQS APP (Automatic Quotation System)
+# CLAUDE.md — AQS APP (Automatic Quotation System)
 
-Read this file fully at the start of every session. Source of intent: `plan.md.txt`
-(currently on the Desktop, outside this folder — move it into `AQS-APP/` to keep it in git).
-If this file and a habit conflict, follow this file. If this file and `plan.md.txt`
+Read this file fully at the start of every session. Source of intent: `plan.md.txt` (in the repo
+root). If this file and a habit conflict, follow this file. If this file and `plan.md.txt`
 conflict, this file wins (it records decisions made after the plan) — but point out the conflict.
+Detailed business rules (pricing, options, items, statuses, PDF, dashboard): **`docs/quotations.md`**.
 
-> Product name is **AQS APP** (repo folder `AQS-APP`). Use "AQS" in code, package names,
-> DB names, and UI text.
+> Product name is **AQS APP** (repo folder `AQS-APP`, local folder `AES APP`). Use "AQS" in code,
+> package names, DB names, and UI text.
 
 ---
 
@@ -15,27 +15,30 @@ conflict, this file wins (it records decisions made after the plan) — but poin
 A web app that produces **automatic quotation PDFs** for glass, aluminum, and metal
 fabrication jobs (sliding windows, sliding doors, window grills, etc.).
 
-A customer picks a product, enters width/length and height (cm or inch), clicks **Process**,
-and immediately gets a PDF estimate. An admin reviews and approves it; the approved quote
-becomes the official PDF and feeds the dashboard.
+A customer — or staff, for a walk-in client — adds one or more items (product, glass choice,
+add-ons such as an open back frame, width × height in cm or inch, quantity), clicks **Process**,
+and immediately gets a draft PDF estimate. An admin reviews it (optionally adjusting the final
+amount) and approves it; the approved quote becomes the official PDF and feeds the dashboard.
 
 ### Roles (exactly three — do not add more without asking)
 
 | Role          | Login method                       | Can do |
 |---------------|------------------------------------|--------|
-| `user`        | Google OAuth, `@up.edu.ph` only    | Create profile, create quotation requests, view/print own draft & approved PDFs, edit own profile |
-| `admin`       | Email + password (staff account)   | Everything a user can + manage products, materials & prices, product templates, labor rates, markup/VAT settings, all quotation requests (approve/reject), users, view audit log, dashboard |
-| `super_admin` | Email + password (staff account)   | Everything an admin can + create/disable/delete admins and users, monitor active users/admins and sessions, view all logs, modify any setting |
+| `user`        | Google OAuth, `@up.edu.ph` only    | Create profile, create quotation requests, view/print own draft & approved PDFs, cancel own pending requests, edit own profile |
+| `admin`       | Email + password (staff account)   | Everything a user can + quote walk-in clients; manage products, templates (choices, add-ons), materials, labour rates, settings; approve/reject/cancel requests; view users, audit log, dashboard |
+| `super_admin` | Email + password (staff account)   | Everything an admin can + create/disable/delete admins and users, monitor sessions, **delete any quotation** (soft delete), modify any setting |
 
 ## 2. Goals
 
 1. A customer can go from login → profile → quotation PDF in under 2 minutes.
 2. Prices are always computed **on the server** from the current price list; the client never sends a price.
-3. Approved quotes are immutable and reproducible (price snapshot stored with the quote).
-4. Admin dashboard: quotations per day, by location, total cost per project, approval rates.
+3. Approved quotes are immutable and reproducible (price snapshot stored with each item).
+4. Admin dashboard: approved quotations per day, by location and product, value, approval rate.
 5. Secure by default (see §6) while staying simple — a small team must be able to maintain it.
 
 ## 3. Confirmed decisions (log)
+
+Superseded entries say so; current detail lives in `docs/quotations.md`.
 
 | Date       | Decision |
 |------------|----------|
@@ -49,44 +52,45 @@ becomes the official PDF and feeds the dashboard.
 | 2026-09-26 | DB enforces: Google accounts are always `user`; staff (`admin`/`super_admin`) always password. |
 | 2026-09-26 | audit_log is append-only via a DB trigger; users with audit history can only be soft-deleted. |
 | 2026-09-26 | Profile: full name, age 18–120, PH mobile (09… / +639…), street, city, province. |
-| 2026-09-26 | Pricing = admin-built templates. Line cost = measurement × factor × (1 + waste%) × item price. Customer unit price = cost per piece × (1 + markup%); amount = unit price × qty; then VAT%. Round half-up to centavos at each step. |
+| 2026-09-26 | Pricing = admin-built templates. Line cost = measurement × factor × (1 + waste%) × item price. Customer unit price = cost per piece × (1 + markup%); amount = unit price × qty; then VAT%. Round half-up to centavos at each step. (+ round-up step since 2026-10-12.) |
 | 2026-09-26 | Defaults: markup 0%, VAT 12%, PHP (single `pricing_settings` row). Products are archived, never deleted. Materials/labour rates can be archived, or deleted one at a time only when no template uses them (409 otherwise). An item's unit can't change while a template uses it. |
-| 2026-09-26 | Quotations: one product per quote (qty 1–100). Prices frozen in `quotations.snapshot` at Process; business details frozen at approval. Customers see unit price/VAT/total only, never costs or markup. |
+| 2026-09-26 | ~~One product per quote; customers see unit price/VAT/total~~ — superseded 2026-10-12 / 2026-10-16. Prices frozen at Process; business details frozen at approval (still true). |
 | 2026-09-26 | Approval assigns `AQS-<year>-<6 digits>` (Philippine time, counter per year), valid 30 days (editable), stores the final PDF once in `backend/storage/quotes/`. Rejection needs a note; the customer sees notes. |
 | 2026-09-26 | Limits: 10 quote requests/min per IP, max 20 pending per customer. |
 | 2026-09-26 | Audit log viewer at `/admin/audit-log` (admin + super_admin): read-only, filters by action prefix / actor email / PHT date range, 50 per page. |
-| 2026-09-26 | Dashboard at `/admin`: figures count requests created in a PHT date range (max 366 days); approval rate = approved ÷ (approved + rejected). |
+| 2026-09-26 | ~~Dashboard counts all requests~~ — superseded 2026-10-16. Date range by request date (PHT, max 366 days); approval rate = approved ÷ (approved + rejected). |
 | 2026-09-26 | User management: all staff can view; only super_admin can change. No self-changes. Disable/delete/role change/password reset revoke sessions. Deletes are soft. Customers can't be promoted to staff. Active sessions page is super_admin only. |
 | 2026-09-26 | Admin pages are lazy-loaded (`features/admin/pages.ts`) so customers never download them. |
 | 2026-09-27 | UI: Blue→Indigo gradient; Light/Dark/System theme (Zustand + localStorage `aqs-theme`, class-based dark mode); Inter via `@fontsource-variable/inter`; add/edit/confirm in native `<dialog>` modals (`components/ui/Modal.tsx`, `confirmAction()` in `stores/feedback.ts`); toasts; shared UI kit in `components/ui/`. Colours only via semantic tokens in `index.css` (bg-surface, text-ink, border-line, bg-brand…). |
+| 2026-10-12 | Staff (admin/super_admin) quote **walk-in clients** without an account (name, PH mobile, optional email, address): `user_id` NULL, `created_by` = staff, starts pending, never shown in a customer account. |
+| 2026-10-12 | Amounts **round up** to the next `rounding_step` (Settings, default ₱100, 0 = off). On approval an admin may set a different final amount (audited `adjusted_from`). |
+| 2026-10-12 | Customers (API + PDF) never see VAT, unit prices, costs or markup — only amounts (VAT included). PDF shows 50% downpayment / 50% upon completion and installation, and signature lines: owner (Settings → owner name, "Cleo David") and client ("Conforme"). |
+| 2026-10-12 | **Add-ons**: optional template parts (e.g. open back), unticked by default, chosen by customers and staff; listed as "With: …". |
+| 2026-10-14 | Input validation shared by backend (`schemas/common.py`) and frontend (`lib/schemas.ts`): PH mobile only (separators stripped), letters-only names/places, optional-but-valid email. |
+| 2026-10-15 | **Choice groups** ("choose one", e.g. Glass type; first choice pre-selected). Add-ons may reduce the window size: size typed = wall opening, other lines measured smaller (open back). |
+| 2026-10-15 | Required fields show a red `*` (`Field required`, `RequiredMark`, `RequiredNote`). |
+| 2026-10-15 | PDF redesigned in app colours (gradient header/total, rounded cards); draft watermark drawn **on top** of the content. |
+| 2026-10-15 | Staff can **cancel** pending quotations (optional reason). Approve, reject and cancel ask a **Yes/No confirmation** first. |
+| 2026-10-16 | **Several items per quotation** (1–20): each with its own product, size, qty, choices, add-ons and amount (rounded up per item); total = sum; a changed final amount shows as an adjustment. Existing quotes migrated to one item. |
+| 2026-10-16 | The PDF never lists materials/labour ("Includes"). Admin price preview re-prices as soon as a choice/add-on changes. |
+| 2026-10-16 | Dashboard counts **approved quotations only** (except approval rate and "waiting for review"). |
+| 2026-10-16 | **Super admin can delete any quotation** — soft delete (`deleted_at`, `deleted_by`), hidden everywhere incl. dashboard, kept in DB + audit log. |
 
 Assumptions not yet confirmed (ask before relying on them heavily):
 - Currency is PHP (₱) and VAT defaults to 12%, editable by admin.
 - Staff accounts do not need an `@up.edu.ph` email.
-- Customer profile fields: full name, age, contact number, address (city/province for dashboard location).
 
 ## 4. Tech stack (pinned — do not swap or add major libraries without asking)
 
-**Frontend** (`/frontend`)
-- React 19 with TypeScript 6 (`strict: true`), Vite 8
-- Tailwind CSS v4 via `@tailwindcss/vite`; theme tokens in `src/index.css` with `@theme` (no `tailwind.config.js`)
-- React Router v7 data router (`createBrowserRouter`, import from `react-router`); use loaders/actions for server data
-- React Hook Form + Zod for forms
-- Zustand only for small UI state (sidebar, theme) — **never** auth or user data
-- `lucide-react` for icons
-- `@fontsource-variable/inter` (self-hosted font)
-- Lint: oxlint (Vite default)
+**Frontend** (`/frontend`): React 19 + TypeScript 6 (`strict`), Vite 8; Tailwind CSS v4 via `@tailwindcss/vite`,
+tokens in `src/index.css` `@theme` (no `tailwind.config.js`); React Router v7 data router (`createBrowserRouter`,
+from `react-router`; loaders/actions for server data); React Hook Form + Zod (`useFieldArray` for quotation items);
+Zustand only for small UI state (sidebar, theme, toasts/confirm) — **never** auth or user data; `lucide-react`;
+`@fontsource-variable/inter`; lint: oxlint.
 
-**Backend** (`/backend`)
-- Python 3.12+ (dev machine has 3.14), FastAPI, Uvicorn — managed with `uv`
-- SQLAlchemy 2.0 async with typed `Mapped[]` models + asyncpg
-- Alembic for migrations
-- Pydantic v2 + `pydantic-settings`
-- Authlib for Google OAuth/OIDC
-- `pwdlib[argon2]` for staff password hashing (Argon2id; OWASP-recommended successor to bcrypt; `passlib` is unmaintained)
-- ReportLab for PDFs
-- `slowapi` for rate limiting
-- pytest + httpx for tests; Ruff for lint/format
+**Backend** (`/backend`): Python 3.12+ (dev machine 3.14), FastAPI, Uvicorn — managed with `uv`; SQLAlchemy 2.0
+async (typed `Mapped[]`) + asyncpg; Alembic; Pydantic v2 + `pydantic-settings`; Authlib (Google OIDC);
+`pwdlib[argon2]` (Argon2id); ReportLab; `slowapi`; pytest + httpx; Ruff.
 
 **Database**: PostgreSQL 16+ on this machine (managed with pgAdmin 4).
 
@@ -103,168 +107,153 @@ Vite dev server :5173 ──proxy /api──►  FastAPI :8000  ──asyncpg─
 ```
 
 - **Same origin in dev and prod.** Vite proxies `/api` to FastAPI in dev; in prod one reverse proxy
-  serves the built SPA and `/api`. This lets us avoid CORS entirely.
+  serves the built SPA and `/api`. No CORS.
 - All API routes live under `/api/v1/...`.
-- Layers in backend: `api` (routes, thin) → `services` (business logic) → `models` (DB). Routes never
-  contain pricing or SQL beyond simple lookups.
+- Layers: `api` (routes, thin) → `services` (business logic) → `models` (DB). Routes never contain
+  pricing or SQL beyond simple lookups.
 
 ### Auth flows
-- **Customer**: `GET /api/v1/auth/google/login` → Google (with `hd=up.edu.ph`, state, nonce, PKCE) →
-  `/api/v1/auth/google/callback`. Server **must verify** the ID token, `email_verified == true`,
-  and that the email ends with `@up.edu.ph` and `hd == "up.edu.ph"` (the `hd` URL param alone is not a security control).
-  First login creates a `user` row; user is redirected to profile setup before quoting.
-- **Staff**: `POST /api/v1/auth/staff/login` with email + password. Rate-limited, generic error
-  messages, account lockout after repeated failures. No public staff registration — the first
-  `super_admin` is created by `backend/scripts/create_super_admin.py`; later admins by super_admin.
-- **Session**: random 256-bit token; only its SHA-256 hash is stored in the `sessions` table
-  (user_id, created_at, last_seen_at, expires_at, ip, user_agent). Cookie:
-  `__Host-aqs_session` + `Secure` in production; `aqs_session` without `Secure` in local dev/tests
-  (the `__Host-` prefix requires HTTPS). Always `HttpOnly`, `SameSite=Lax`, `Path=/`. Idle timeout 30 min for staff,
-  8 h for users; absolute timeout 7 days. Rotate the token on login and role change.
-  "Active users/admins" for super_admin = sessions with recent `last_seen_at`. Logout deletes the row.
+- **Customer**: `GET /api/v1/auth/google/login` → Google (`hd=up.edu.ph`, state, nonce, PKCE) →
+  `/api/v1/auth/google/callback`. Server **must verify** the ID token, `email_verified == true`, email ends with
+  `@up.edu.ph` and `hd == "up.edu.ph"`. First login creates a `user` row → profile setup before quoting.
+- **Staff**: `POST /api/v1/auth/staff/login` (rate-limited 5/min, generic errors, lockout 15 min after 10 failures).
+  No public staff registration — first `super_admin` via `scripts/create_super_admin.py`; later admins by super_admin
+  (Users → Add staff account).
+- **Session**: random 256-bit token, only its SHA-256 hash stored (`sessions`). Cookie `__Host-aqs_session` + `Secure`
+  in production, `aqs_session` in dev/tests; always `HttpOnly`, `SameSite=Lax`, `Path=/`. Idle timeout 30 min staff,
+  8 h users; absolute 7 days. Rotate on login and role change. Logout deletes the row.
 
-### Quotation flow
-1. User picks a product template, enters dimensions + unit (`cm` | `in`) and quantity.
-2. Server converts to **integer millimetres**, validates min/max per product, computes cost with
-   `services/pricing.py` using `Decimal` (never `float`), and stores a `quotation` with status
-   `pending` plus a JSON **price snapshot** (materials, labor, markup, VAT, totals).
-3. Draft PDF is generated on request from the snapshot (not stored), watermarked.
-4. Admin approves/rejects (with note). On approval: assign quote number `AQS-YYYY-000123`,
-   generate the final PDF once, store it in `backend/storage/quotes/`, set status `approved`.
-5. Every state change writes an `audit_log` row.
+### Quotation flow (detail: `docs/quotations.md`)
+1. Customer (own profile) or staff (walk-in client details) adds 1–20 items: product, choices, add-ons, size + unit, qty.
+2. Server converts to **integer mm**, validates per-product min/max and options, prices each item with
+   `services/pricing.py` + `services/options.py` (`Decimal`), rounds each item up, freezes each item's snapshot,
+   stores the quotation `pending` with total = Σ item amounts.
+3. Draft PDF generated on request from the snapshots (not stored), watermarked.
+4. Admin approves (optional final amount → adjustment), rejects (note), or cancels; customers may cancel their own.
+   Approval assigns `AQS-YYYY-000123`, generates the final PDF once, stores it, sets `approved`.
+5. Super admin may soft-delete any quotation. Every state change writes an `audit_log` row.
 
-Statuses: `pending` → `approved` | `rejected`; `cancelled` by the user while pending.
+Statuses: `pending` → `approved` | `rejected` | `cancelled` (+ `deleted_at` for soft-deleted).
 
 ### Core tables
-`users` (id, email, role, auth_provider, password_hash nullable, is_active, failed_logins, locked_until),
-`profiles`, `sessions`, `materials`, `labor_rates`, `products`, `product_components` (template line: material XOR labour
-rate + basis/factor/waste), `pricing_settings` (id=1, also business details + validity),
-`quotations` (snapshot JSONB + dashboard columns), `quote_counters`,
-`audit_log` (actor_id, action, entity, entity_id, before/after JSON, ip, created_at — append-only).
-Use UUID primary keys; timestamps stored as `timestamptz` in UTC, displayed in Asia/Manila.
+`users`, `profiles`, `sessions`, `materials`, `labor_rates`, `products`, `product_option_groups`, `product_options`
+(add-ons and choices, size reductions), `product_components` (template line: material XOR labour rate + basis/factor/
+waste + optional `option_id`), `pricing_settings` (id=1: markup, VAT, currency, validity, rounding step, business
+details, owner name), `quotations` (client snapshot, total, status, review fields, `user_id` nullable, `created_by`,
+`deleted_at/by`), `quotation_items` (product, size, qty, amount, snapshot), `quote_counters`,
+`audit_log` (append-only). UUID primary keys; `timestamptz` in UTC, displayed in Asia/Manila.
 
 ## 6. Security rules (non-negotiable)
 
-- **Tokens**: never store session or auth tokens in localStorage, sessionStorage, Zustand, or JS-readable cookies.
-- **CSRF**: `SameSite=Lax` cookie **plus** double-submit token: server sets a non-httpOnly `aqs_csrf`
-  cookie; frontend sends it as `X-CSRF-Token` on every POST/PUT/PATCH/DELETE; middleware rejects
-  mismatches and also checks the `Origin` header against `APP_ORIGIN`. No state changes on GET.
-- **CORS**: not enabled (same-origin via proxy). If ever needed, allow only the exact origin(s) from
-  settings with `allow_credentials=True` — never `*`.
-- **Authorization** is enforced on the server in FastAPI dependencies (`require_role(...)`) on every
-  route. Users can only access their own quotations/profile (check ownership in the query, not after).
-  The frontend hiding a button is not security.
-- **Input validation**: Pydantic schemas with bounds on every field (dimensions, quantity, string
-  lengths). Reject unknown fields (`extra="forbid"`).
+- **Tokens**: never in localStorage, sessionStorage, Zustand, or JS-readable cookies.
+- **CSRF**: `SameSite=Lax` **plus** double-submit token (`aqs_csrf` cookie → `X-CSRF-Token` on every
+  POST/PUT/PATCH/DELETE); middleware also checks `Origin` against `APP_ORIGIN`. No state changes on GET.
+- **CORS**: not enabled. If ever needed, exact origins with `allow_credentials=True` — never `*`.
+- **Authorization** on the server in FastAPI dependencies (`StaffUser`, `SuperAdminUser`, `CustomerUser`) on every
+  route. Ownership and `deleted_at IS NULL` are checked in the query (`not_deleted()`), not after. Hiding a button is
+  not security.
+- **Input validation**: Pydantic schemas with bounds on every field; `extra="forbid"`; shared field rules in
+  `schemas/common.py`.
 - **SQL**: SQLAlchemy only; never build SQL with f-strings or string concatenation.
-- **Passwords** (staff only): Argon2id, min 12 chars, check against a common-password list, rate limit
-  login (e.g. 5/min per IP+email), lock 15 min after 10 failures.
-- **Security headers** middleware: `Content-Security-Policy` (self only), `X-Content-Type-Options: nosniff`,
-  `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, HSTS when on HTTPS.
-- **Secrets** live in `.env` files that are git-ignored. Commit only `.env.example` with placeholder
-  values. Never print secrets in logs, errors, or chat.
-- **Errors**: return generic messages to clients; log details server-side. No stack traces in responses.
-- **PDF files** are served only through an authorized endpoint (`GET /api/v1/quotations/{id}/pdf`),
-  never from a public static folder.
-- **Audit**: log logins (success/failure), role changes, price/settings changes, approvals, deletions.
-- **Deletion**: super_admin deletes are soft deletes (`is_active=false`, `deleted_at`) unless the owner
+- **Passwords** (staff only): Argon2id, min 12 chars, common-password check, rate limit, lockout.
+- **Security headers**: CSP (`default-src 'none'`), nosniff, `strict-origin-when-cross-origin`, `X-Frame-Options: DENY`,
+  HSTS on HTTPS. (CSP blocks the Swagger page at `/api/docs` — known, not needed.)
+- **Secrets** in git-ignored `.env`; commit only `.env.example`. `staff-accounts.txt` (owner's private notes) is
+  git-ignored too — never read it out, print it, or commit it. Never print secrets in logs, errors, or chat.
+- **Errors**: generic messages to clients; details in server logs. No stack traces in responses.
+- **PDF files** only through authorized endpoints (`GET /api/v1/quotations/{id}/pdf`, admin equivalent).
+- **Audit**: logins, role changes, price/settings/template changes, approvals, rejections, cancellations, deletions.
+- **Deletion**: soft deletes (users: `is_active=false` + `deleted_at`; quotations: `deleted_at`) unless the owner
   explicitly asks for hard delete; audit rows are never deleted.
-- **Dependencies**: pin versions (`uv.lock` / `package-lock.json`); don't add packages without asking.
+- **Dependencies**: pinned (`uv.lock` / `package-lock.json`); don't add packages without asking.
 
 ## 7. Where files go
 
 ```
-AQS-APP/                     (repo root)
-├── CLAUDE.md                this file
-├── plan.md.txt              original plan from the owner
-├── docs/                    extra docs (API notes, ERD, decisions longer than one line)
+AQS-APP/  CLAUDE.md, README.md (setup/run guide), plan.md.txt, docs/ (quotations.md = business rules)
 ├── backend/
-│   ├── app/
-│   │   ├── main.py          FastAPI app factory, middleware registration
-│   │   ├── core/            config.py (Settings), security.py (hashing, sessions),
-│   │   │                    csrf.py, headers.py, deps.py (current_user, require_role), rate_limit.py
-│   │   ├── db/              base.py (DeclarativeBase), session.py (async engine/sessionmaker)
-│   │   ├── models/          one file per aggregate: user.py, product.py, quotation.py, audit.py ...
-│   │   ├── schemas/         Pydantic request/response models, mirrors models/
-│   │   ├── api/v1/          routers: auth.py, profile.py, products.py, quotations.py,
-│   │   │                    admin.py, super_admin.py, dashboard.py
-│   │   └── services/        pricing.py, pdf.py, oauth.py, audit.py, units.py
-│   ├── alembic/             migrations (versions/ reviewed by hand, never blindly autogenerated)
-│   ├── scripts/             create_db.py, create_super_admin.py, seed_products.py
-│   ├── storage/quotes/      generated final PDFs (git-ignored)
-│   ├── tests/               mirrors app/ (test_pricing.py, test_auth.py, ...)
-│   ├── pyproject.toml
-│   └── .env.example
-└── frontend/
-    ├── src/
-    │   ├── main.tsx, router.tsx
-    │   ├── index.css        Tailwind import + @theme tokens
-    │   ├── api/             client.ts (fetch wrapper: credentials 'include', CSRF header), per-feature calls
-    │   ├── features/        auth/, profile/, quotations/, admin/, super-admin/ (pages + feature components)
-    │   ├── components/      shared UI (components/ui/ for buttons, inputs, tables, layout)
-    │   ├── lib/             zod schemas shared by forms, formatters (currency, units)
-    │   └── stores/          Zustand UI-only stores
-    ├── public/
-    ├── vite.config.ts       includes /api proxy to :8000
-    └── .env.example
+│   ├── app/  main.py | core/ (config, security, csrf, headers, deps, rate_limit) | db/ (base, session)
+│   │   ├── models/    user, session, catalog (materials…product_options), quotation (+ items), audit
+│   │   ├── schemas/   auth, profile, catalog, quotation, dashboard, users, audit, common (shared field rules)
+│   │   ├── api/v1/    auth, health, profile, quotations (customer), admin_catalog, admin_quotations,
+│   │   │              admin_dashboard, admin_users, admin_audit
+│   │   └── services/  pricing, options, catalog, quotations, quotation_views, pdf, dashboard, sessions, oauth, audit
+│   ├── alembic/versions/  0001–0008, hand-reviewed (see docs/quotations.md §7)
+│   ├── scripts/   create_db.py, create_super_admin.py, reset_staff_password.py
+│   ├── storage/quotes/  final PDFs (git-ignored)
+│   └── tests/     test_<area>.py, incl. test_migrations.py (data round-trip)
+└── frontend/src/
+    ├── main.tsx, router.tsx, index.css (Tailwind + @theme tokens)
+    ├── api/        client.ts (fetch wrapper, CSRF), auth, profile, quotations, admin
+    ├── features/   auth/, profile/, quotations/ (incl. shared QuoteItemFields + quoteItem.ts), admin/
+    │               (staff + super-admin pages; super-admin/ is empty)
+    ├── components/ layout + ui/ (Button, Card, Field, Modal, Badge, Feedback…)
+    ├── lib/        schemas.ts (shared zod rules), format.ts, errors.ts, guards.ts
+    └── stores/     Zustand UI-only stores: ui.ts (theme, sidebar), feedback.ts (toasts, confirm dialog)
 ```
 
-Rules: new backend endpoint → router in `api/v1/`, schema in `schemas/`, logic in `services/`,
-test in `tests/`. New page → `frontend/src/features/<feature>/`. Don't create new top-level folders without asking.
+Rules: new backend endpoint → router in `api/v1/`, schema in `schemas/`, logic in `services/`, test in `tests/`.
+New page → `frontend/src/features/<feature>/`. Don't create new top-level folders without asking.
 
 ## 8. Database setup (local, pgAdmin 4)
 
-- `backend/.env` holds `DATABASE_URL=postgresql+asyncpg://aqs_app:<pw>@localhost:5432/aqs` and, for
-  setup only, `POSTGRES_ADMIN_URL` (the postgres superuser you use in pgAdmin).
-- `uv run python -m scripts.create_db` creates the `aqs_app` role (least privilege — no superuser) and the `aqs`
-  database if missing. Then `alembic upgrade head` creates all tables. Then `create_super_admin.py`
-  and `seed_products.py`. The database will then appear in pgAdmin automatically.
+- `backend/.env` holds `DATABASE_URL=postgresql+asyncpg://aqs_app:<pw>@localhost:5432/aqs` and, for setup only,
+  `POSTGRES_ADMIN_URL` (the postgres superuser used in pgAdmin).
+- `uv run python -m scripts.create_db` creates the `aqs_app` role (least privilege) and the `aqs` + `aqs_test`
+  databases. Then `alembic upgrade head`, then `create_super_admin`. The catalogue (materials, labour, products,
+  choices, add-ons) is entered through the admin UI — there is no seed script.
 - Schema changes **only** through Alembic migrations. Never edit tables by hand in pgAdmin.
 - Ask the owner for DB credentials; never guess, hard-code, or commit them.
 
 ## 9. How I (Claude) should work
 
 - **Ask when unclear** — especially pricing formulas, product rules, or anything touching money or security.
-- Keep it simple: prefer the standard library / pinned stack over new abstractions. No premature microservices,
-  queues, or caches.
+- Keep it simple: standard library / pinned stack over new abstractions. No microservices, queues, or caches.
 - Small, reviewable changes. After a change, say what was changed and how to run/test it.
 - Money: `Decimal` in Python, `NUMERIC(12,2)` in Postgres, formatted strings in the UI. Never floats.
 - Units: accept cm/in at the edge, store integer mm. Show the user's chosen unit on the PDF.
-- Write tests for pricing, unit conversion, auth/role checks, and CSRF before calling a feature done.
+- Write tests for pricing, unit conversion, auth/role checks, CSRF and data migrations before calling a feature done.
 - Type everything: TS `strict`, Python type hints; Ruff clean; no `any` / `# type: ignore` without a comment why.
-- Alembic autogenerate duplicates CHECK constraints for `str_enum` columns — always hand-edit
-  migrations to VARCHAR + one named `ck_...` constraint, then run `alembic check`.
+- Alembic autogenerate duplicates CHECK constraints for `str_enum` columns — hand-write/edit migrations (VARCHAR +
+  one named `ck_...`), then run `alembic check`. Migrations that move data get a round-trip test.
 - Tests wipe `aqs_test` — never point a dev server at it while running tests.
-- The desktop app's browser pane can't show PDFs; check PDFs by rendering them to PNG (pypdfium2).
-- Shell is Windows (PowerShell/Git Bash). Give commands that work there.
-- Git repo on `main` (no commits yet). Never commit or push unless asked.
+- PDFs: the browser pane can't show them; render to PNG (`uv run --with pypdfium2 --with pillow`). To assert PDF
+  text in tests set `reportlab.rl_config.pageCompression = 0` — **before approval**, because the final PDF is stored
+  at approval time. Keep a typical 2-item quote on one page (signatures included).
+- Staff sessions expire after 30 idle minutes; Claude can't sign in (never types the owner's password) — ask the
+  owner to sign in on the browser pane for UI checks, or verify via tests.
+- Shell is Windows (PowerShell/Git Bash). PowerShell 5.1 has no `&&` — give one command per line.
+- Git: `main`, pushed to GitHub (`origin`). The owner often commits/pushes themselves; check `git status` first.
+  Never commit or push unless asked.
 - Don't expose secrets, the user's email, or DB passwords in code, logs, or messages.
 
 ### Keeping this file current
 When a decision changes or we learn something important (new rule, changed stack choice, a gotcha),
 **propose an edit to CLAUDE.md, show the exact diff, and wait for approval before saving.**
 Add confirmed decisions to the log in §3 with the date. Keep this file under ~300 lines —
-move long detail into `docs/` and link it here.
+move long detail into `docs/` (e.g. `docs/quotations.md`) and link it here.
 
-## 10. Common commands (fill in as the project is scaffolded)
+## 10. Common commands
 
-Dev servers: `.claude/launch.json` defines `backend` (:8000) and `frontend` (:5173).
+Dev servers: `.claude/launch.json` defines `backend` (:8000) and `frontend` (:5173). Full setup guide: `README.md`.
 
 ```bash
 # backend (from backend/)
 uv sync
 uv run python -m scripts.create_db
 uv run alembic upgrade head
+uv run alembic check
 uv run python -m scripts.create_super_admin   # first owner account (hidden password prompt)
-uv run python -m scripts.reset_staff_password # forgotten staff/owner password (hidden prompt; unlocks + signs out)
+uv run python -m scripts.reset_staff_password # forgotten staff/owner password (unlocks + signs out)
 uv run uvicorn app.main:app --reload --port 8000
-uv run pytest      # uses the `aqs_test` DB (made by create_db); DB tests skip if it's missing
-uv run ruff check . && uv run ruff format .
+uv run pytest      # aqs_test DB; ~5 min; DB tests skip if it's missing
+uv run ruff check .
+uv run ruff format .
 
 # frontend (from frontend/)
 npm install
 npm run dev        # http://localhost:5173
-npm run build
+npm run build      # also type-checks
 npm run lint
 ```
 
@@ -272,10 +261,13 @@ Gotcha: restart the backend after editing `.env` — `--reload` only watches `.p
 
 ## 11. Open questions
 
-- Real materials, labour rates and product templates to enter (via the admin UI).
-- Confirm: markup applied before VAT; is a minimum charge per quotation needed?
-- Business name, logo, address, and terms text for the PDF header/footer.
-- Hosting target and domain (affects HTTPS, cookie `Secure` in prod, backups).
-- Google OAuth app is in "Testing": add test users now; click "Publish app" before real users.
+- Real catalogue to finish in the admin UI: glass **Choice group** (Ordinary / Reflective), the open back add-on's
+  material line and its mm reduction. Several aluminium profiles are priced per m² by area — confirm vs per length.
+- Hide the "Includes: …" materials list on the customer's quotation page too (the PDF already hides it)?
+- Dashboard dates: keep "requested in range" or switch to "approved in range" for sales figures?
+- Restore for deleted quotations (a Deleted tab)? Allow PH landlines for walk-in clients?
+- A font with the ₱ glyph for the PDF (needs a font file in the repo)?
+- Is a minimum charge per quotation needed? Business logo on the PDF?
 - Enter real business name, address, contact and terms in Admin → Settings (placeholders now).
-- Later: several products per quotation?
+- Hosting target and domain (HTTPS, cookie `Secure`, backups). Google OAuth app is in "Testing": add test users;
+  "Publish app" before real users.
