@@ -4,7 +4,14 @@
 import { api } from './client'
 import type { Quotation, QuotationItem, QuotationRequest, QuotationStatus, QuotationSummary } from './quotations'
 
-export type PriceUnit = 'sqm' | 'lm' | 'piece'
+/** Buying units (pricing v2). Bars are whole bars of a stock length (e.g. 21 ft, 6 m). */
+export type PriceUnit = 'piece' | 'kg' | 'ft' | 'sqft' | 'bar'
+export type LaborUnit = 'piece' | 'ft' | 'sqft'
+/** Units in quotations priced before v2 (Oct 2026) */
+export type LegacyUnit = 'sqm' | 'lm'
+export type StockUnit = 'ft' | 'm'
+/** per_sqft: owner-set rates per sq ft (template = cost guide); computed: template + markup */
+export type PricingMethod = 'per_sqft' | 'computed'
 export type MaterialCategory = 'glass' | 'aluminum' | 'metal' | 'hardware' | 'other'
 export type ProductCategory = 'sliding_window' | 'sliding_door' | 'window_grill' | 'other'
 export type Basis = 'area' | 'perimeter' | 'width' | 'height' | 'fixed'
@@ -15,7 +22,11 @@ export interface Material {
   name: string
   category: MaterialCategory
   unit: PriceUnit
+  /** Bars: the price of one whole bar */
   unit_price: string
+  /** Bars only */
+  stock_length: string | null
+  stock_length_unit: StockUnit | null
   is_active: boolean
   updated_at: string
 }
@@ -24,7 +35,7 @@ export interface LaborRate {
   id: string
   code: string
   name: string
-  unit: PriceUnit
+  unit: LaborUnit
   rate: string
   is_active: boolean
   updated_at: string
@@ -40,6 +51,9 @@ export interface Product {
   max_width_mm: number
   min_height_mm: number
   max_height_mm: number
+  pricing_method: PricingMethod
+  /** Per-sq-ft products: the product's own rate (VAT included); chosen options add theirs */
+  rate_per_sqft: string
   is_active: boolean
   updated_at: string
 }
@@ -61,6 +75,8 @@ export interface ProductOption {
   /** When chosen, the rest of the window is measured this much narrower / shorter (open back). */
   width_reduction_mm: number
   height_reduction_mm: number
+  /** Per-sq-ft products: added to the rate when chosen (glass type, open back extra) */
+  rate_per_sqft: string
 }
 
 export interface Component {
@@ -74,6 +90,8 @@ export interface Component {
   item_name: string
   item_unit: PriceUnit
   item_price: string
+  item_stock_length: string | null
+  item_stock_length_unit: StockUnit | null
   item_active: boolean
   basis: Basis
   factor: string
@@ -108,22 +126,38 @@ export interface PriceLine {
   name: string
   label: string
   basis: Basis
-  unit: PriceUnit
+  unit: PriceUnit | LegacyUnit
   unit_price: string
+  /** In the line's unit; bars: whole bars */
   quantity: string
   cost: string
   /** Add-on or choice name; '' = always included */
   option: string
-  /** Size this line was measured at (null in quotations made before choice groups) */
-  width_mm: number | null
-  height_mm: number | null
+  /** Bars: before rounding up to whole bars */
+  needed?: string | null
+  stock_length?: string | null
+  stock_length_unit?: StockUnit | null
+  /** Size this line was measured at: inches since v2, mm before (null before choice groups) */
+  width_in?: string | null
+  height_in?: string | null
+  width_mm?: number | null
+  height_mm?: number | null
 }
 
+/** A price breakdown: the admin preview, or an item's frozen snapshot. The v2 fields are
+ * null in quotations priced before v2, whose VAT was added on top instead of included. */
 export interface PricePreview {
+  pricing_method: PricingMethod | null
   width_mm: number
   height_mm: number
+  width_in: string | null
+  height_in: string | null
+  area_sqft: string | null
   quantity: number
   lines: PriceLine[]
+  /** Per-sq-ft products: the parts of the rate (product, chosen options) */
+  rates: { name: string; rate_per_sqft: string }[]
+  rate_per_sqft: string | null
   unit_subtotal: string
   unit_price: string
   subtotal: string
@@ -137,6 +171,10 @@ export interface PricePreview {
   /** rounded_total - total */
   rounding: string
   rounded_total: string
+  /** The VAT inside the rounded total (prices include VAT since v2) */
+  vat_included: string | null
+  /** rounded_total - cost of all pieces */
+  margin: string | null
   currency: string
   warnings: string[]
 }
@@ -327,6 +365,9 @@ export const adminApi = {
 
   pricingSettings: () => api<PricingSettings>('/admin/pricing-settings'),
   updatePricingSettings: (b: Body) => api<PricingSettings>('/admin/pricing-settings', json('PUT', b)),
+  /** Every rate per sq ft (products' own and their options') x (1 + percent / 100). */
+  raiseRates: (percent: string) =>
+    api<{ products: number; options: number }>('/admin/pricing/raise-rates', json('POST', { percent })),
 
   quotations: (status?: QuotationStatus) =>
     api<AdminQuotationSummary[]>(`/admin/quotations${status ? `?status=${status}` : ''}`),

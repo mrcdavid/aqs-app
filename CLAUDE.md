@@ -16,9 +16,12 @@ A web app that produces **automatic quotation PDFs** for glass, aluminum, and me
 fabrication jobs (sliding windows, sliding doors, window grills, etc.).
 
 A customer — or staff, for a walk-in client — adds one or more items (product, glass choice,
-add-ons such as an open back frame, width × height in cm or inch, quantity), clicks **Process**,
+add-ons such as an open back frame, width × height in inches (or cm), quantity), clicks **Process**,
 and immediately gets a draft PDF estimate. An admin reviews it (optionally adjusting the final
 amount) and approves it; the approved quote becomes the official PDF and feeds the dashboard.
+Pricing follows the shop (v2, 2026-10-17): sliding windows are sold **per sq ft** at owner-set rates;
+grills are priced from the **whole bars** they use plus labour; materials are entered in the units
+they are bought in (21-ft bars, kilos, pieces, feet, sq ft). Prices include VAT.
 
 ### Roles (exactly three — do not add more without asking)
 
@@ -52,7 +55,7 @@ Superseded entries say so; current detail lives in `docs/quotations.md`.
 | 2026-09-26 | DB enforces: Google accounts are always `user`; staff (`admin`/`super_admin`) always password. |
 | 2026-09-26 | audit_log is append-only via a DB trigger; users with audit history can only be soft-deleted. |
 | 2026-09-26 | Profile: full name, age 18–120, PH mobile (09… / +639…), street, city, province. |
-| 2026-09-26 | Pricing = admin-built templates. Line cost = measurement × factor × (1 + waste%) × item price. Customer unit price = cost per piece × (1 + markup%); amount = unit price × qty; then VAT%. Round half-up to centavos at each step. (+ round-up step since 2026-10-12.) |
+| 2026-09-26 | ~~Pricing = templates in m²/m, markup, then VAT% added~~ — superseded 2026-10-17 (pricing v2). Still true: line cost = measurement × factor × (1 + waste%) × item price; half-up to centavos at each step. |
 | 2026-09-26 | Defaults: markup 0%, VAT 12%, PHP (single `pricing_settings` row). Products are archived, never deleted. Materials/labour rates can be archived, or deleted one at a time only when no template uses them (409 otherwise). An item's unit can't change while a template uses it. |
 | 2026-09-26 | ~~One product per quote; customers see unit price/VAT/total~~ — superseded 2026-10-12 / 2026-10-16. Prices frozen at Process; business details frozen at approval (still true). |
 | 2026-09-26 | Approval assigns `AQS-<year>-<6 digits>` (Philippine time, counter per year), valid 30 days (editable), stores the final PDF once in `backend/storage/quotes/`. Rejection needs a note; the customer sees notes. |
@@ -75,6 +78,12 @@ Superseded entries say so; current detail lives in `docs/quotations.md`.
 | 2026-10-16 | The PDF never lists materials/labour ("Includes"). Admin price preview re-prices as soon as a choice/add-on changes. |
 | 2026-10-16 | Dashboard counts **approved quotations only** (except approval rate and "waiting for review"). |
 | 2026-10-16 | **Super admin can delete any quotation** — soft delete (`deleted_at`, `deleted_by`), hidden everywhere incl. dashboard, kept in DB + audit log. |
+| 2026-10-17 | **Pricing v2 — buying units.** Materials per piece, kg, ft, sq ft or **bar** (stock length, e.g. 21 ft / 6 m; always whole bars, rounded up). Labour per piece, ft or sq ft. Old m²/m prices converted at the same cost (migration 0009). |
+| 2026-10-17 | Products have a **pricing method**: `per_sqft` (sliding windows: area × (product rate + chosen options' rates), no markup; the template is a **cost guide** showing cost and margin to staff) or `computed` (e.g. grills: Σ lines × (1 + markup)). |
+| 2026-10-17 | Glass type = a choice with its own rate per sq ft (first = default, e.g. 1/4 Bronze). Sheet size (4×7 ft default, 4×8, 4×6) = a zero-rate choice group: recorded, not priced. Open back = add-on with an extra rate per sq ft. |
+| 2026-10-17 | Grills: bars used (area basis, factor = bars per sq ft; 48×48 in ≈ 3.5 → 4 bars of 6 m) + fixed labour per grill + markup. |
+| 2026-10-17 | **Prices are final, VAT included** — VAT is never added (staff see the VAT inside each amount). Sizes typed in **inches by default** (cm accepted); area in sq ft from the exact inches. |
+| 2026-10-17 | Staff can **raise (or lower) every rate per sq ft by N%** (Settings; −50…+100; Yes/No; audited). Computed products follow their material prices. |
 
 Assumptions not yet confirmed (ask before relying on them heavily):
 - Currency is PHP (₱) and VAT defaults to 12%, editable by admin.
@@ -125,9 +134,9 @@ Vite dev server :5173 ──proxy /api──►  FastAPI :8000  ──asyncpg─
 
 ### Quotation flow (detail: `docs/quotations.md`)
 1. Customer (own profile) or staff (walk-in client details) adds 1–20 items: product, choices, add-ons, size + unit, qty.
-2. Server converts to **integer mm**, validates per-product min/max and options, prices each item with
-   `services/pricing.py` + `services/options.py` (`Decimal`), rounds each item up, freezes each item's snapshot,
-   stores the quotation `pending` with total = Σ item amounts.
+2. Server converts to **integer mm** (stored, checked against per-product min/max) and **exact inches** (priced),
+   validates options, prices each item with `services/pricing.py` + `services/options.py` (`Decimal`; per sq ft or
+   computed), rounds each item up, freezes each item's snapshot, stores the quotation `pending` with total = Σ items.
 3. Draft PDF generated on request from the snapshots (not stored), watermarked.
 4. Admin approves (optional final amount → adjustment), rejects (note), or cancels; customers may cancel their own.
    Approval assigns `AQS-YYYY-000123`, generates the final PDF once, stores it, sets `approved`.
@@ -136,9 +145,10 @@ Vite dev server :5173 ──proxy /api──►  FastAPI :8000  ──asyncpg─
 Statuses: `pending` → `approved` | `rejected` | `cancelled` (+ `deleted_at` for soft-deleted).
 
 ### Core tables
-`users`, `profiles`, `sessions`, `materials`, `labor_rates`, `products`, `product_option_groups`, `product_options`
-(add-ons and choices, size reductions), `product_components` (template line: material XOR labour rate + basis/factor/
-waste + optional `option_id`), `pricing_settings` (id=1: markup, VAT, currency, validity, rounding step, business
+`users`, `profiles`, `sessions`, `materials` (unit; bars: stock length), `labor_rates`, `products` (pricing method,
+rate per sq ft), `product_option_groups`, `product_options` (add-ons and choices, size reductions, rate per sq ft),
+`product_components` (template line: material XOR labour rate + basis/factor/waste + optional `option_id`),
+`pricing_settings` (id=1: markup, VAT, currency, validity, rounding step, business
 details, owner name), `quotations` (client snapshot, total, status, review fields, `user_id` nullable, `created_by`,
 `deleted_at/by`), `quotation_items` (product, size, qty, amount, snapshot), `quote_counters`,
 `audit_log` (append-only). UUID primary keys; `timestamptz` in UTC, displayed in Asia/Manila.
@@ -178,7 +188,7 @@ AQS-APP/  CLAUDE.md, README.md (setup/run guide), plan.md.txt, docs/ (quotations
 │   │   ├── api/v1/    auth, health, profile, quotations (customer), admin_catalog, admin_quotations,
 │   │   │              admin_dashboard, admin_users, admin_audit
 │   │   └── services/  pricing, options, catalog, quotations, quotation_views, pdf, dashboard, sessions, oauth, audit
-│   ├── alembic/versions/  0001–0008, hand-reviewed (see docs/quotations.md §7)
+│   ├── alembic/versions/  0001–0009, hand-reviewed (see docs/quotations.md §7)
 │   ├── scripts/   create_db.py, create_super_admin.py, reset_staff_password.py
 │   ├── storage/quotes/  final PDFs (git-ignored)
 │   └── tests/     test_<area>.py, incl. test_migrations.py (data round-trip)
@@ -211,7 +221,8 @@ New page → `frontend/src/features/<feature>/`. Don't create new top-level fold
 - Keep it simple: standard library / pinned stack over new abstractions. No microservices, queues, or caches.
 - Small, reviewable changes. After a change, say what was changed and how to run/test it.
 - Money: `Decimal` in Python, `NUMERIC(12,2)` in Postgres, formatted strings in the UI. Never floats.
-- Units: accept cm/in at the edge, store integer mm. Show the user's chosen unit on the PDF.
+- Units: accept inches (default) or cm at the edge; store integer mm (limits); price from the exact inches (cm ÷ 2.54,
+  never via rounded mm): lengths in ft, area in sq ft = w × h ÷ 144 (2 dp). PDF shows the typed size + sq ft.
 - Write tests for pricing, unit conversion, auth/role checks, CSRF and data migrations before calling a feature done.
 - Type everything: TS `strict`, Python type hints; Ruff clean; no `any` / `# type: ignore` without a comment why.
 - Alembic autogenerate duplicates CHECK constraints for `str_enum` columns — hand-write/edit migrations (VARCHAR +
@@ -261,13 +272,15 @@ Gotcha: restart the backend after editing `.env` — `--reload` only watches `.p
 
 ## 11. Open questions
 
-- Real catalogue to finish in the admin UI: glass **Choice group** (Ordinary / Reflective), the open back add-on's
-  material line and its mm reduction. Several aluminium profiles are priced per m² by area — confirm vs per length.
+- Real catalogue to enter in the admin UI (pricing v2): rates per sq ft for each sliding window, glass type (1/4
+  Bronze, reflective mirror, smoked…) and the open back extra; sheet sizes; 21-ft profile bars, kilo items (jamb
+  rubber, vinyl #1); grill designs (bars per sq ft) and labour per grill.
+- Sliding doors: per sq ft like windows? Open back size reductions are still entered in mm — switch to inches?
 - Hide the "Includes: …" materials list on the customer's quotation page too (the PDF already hides it)?
 - Dashboard dates: keep "requested in range" or switch to "approved in range" for sales figures?
 - Restore for deleted quotations (a Deleted tab)? Allow PH landlines for walk-in clients?
 - A font with the ₱ glyph for the PDF (needs a font file in the repo)?
-- Is a minimum charge per quotation needed? Business logo on the PDF?
+- Is a minimum charge per window / per quotation needed (small windows priced per sq ft)? Business logo on the PDF?
 - Enter real business name, address, contact and terms in Admin → Settings (placeholders now).
 - Hosting target and domain (HTTPS, cookie `Secure`, backups). Google OAuth app is in "Testing": add test users;
   "Publish app" before real users.

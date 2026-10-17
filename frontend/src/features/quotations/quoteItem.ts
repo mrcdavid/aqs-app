@@ -15,7 +15,7 @@ export function fromMm(mm: number, unit: LengthUnit): string {
   return String(Math.round((mm / MM_PER[unit]) * 10) / 10)
 }
 
-const size = z.string().trim().regex(/^\d{1,5}(\.\d{1,2})?$/, 'Enter a number like 120 or 120.5')
+const size = z.string().trim().regex(/^\d{1,5}(\.\d{1,2})?$/, 'Enter a number like 48 or 47.5')
 
 export const quoteItemSchema = z.object({
   product_id: z.string().min(1, 'Choose a product'),
@@ -35,7 +35,8 @@ export type QuoteFormValues = z.input<typeof quoteFormSchema>
 
 export const EMPTY_QUOTE_ITEM: QuoteItemValues = {
   product_id: '',
-  unit: 'cm',
+  unit: 'in', // the shop measures in inches; areas are in sq ft
+
   width: '',
   height: '',
   quantity: 1,

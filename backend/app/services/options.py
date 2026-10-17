@@ -1,7 +1,8 @@
 """Product options: add-ons (tick or not) and choose-one groups (e.g. Glass type).
 
 Rules shared by the customer catalogue, quotations and the admin price preview:
-  - An add-on is offered when it has at least one line and none of its items is archived.
+  - An add-on is offered when it has at least one line (or, on a per-sq-ft product, a rate per
+    sq ft) and none of its items is archived.
   - A choice is offered when none of its items is archived (it may have no lines, e.g. "None").
   - A group with choices needs exactly one of them; if none can be offered, the product can't be
     quoted at all (the window would be missing its glass).
@@ -13,13 +14,21 @@ import uuid
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import LaborRate, Material, ProductComponent, ProductOption, ProductOptionGroup
+from app.models import (
+    LaborRate,
+    Material,
+    Product,
+    ProductComponent,
+    ProductOption,
+    ProductOptionGroup,
+)
 from app.services.catalog import to_component_input
 from app.services.pricing import ComponentInput
 
@@ -51,7 +60,11 @@ class Offer:
 
 
 def offer(
-    components: Lines, groups: Sequence[ProductOptionGroup], options: Sequence[ProductOption]
+    components: Lines,
+    groups: Sequence[ProductOptionGroup],
+    options: Sequence[ProductOption],
+    *,
+    per_sqft: bool = False,
 ) -> Offer:
     items_by_option: dict[uuid.UUID, list[Material | LaborRate]] = defaultdict(list)
     for component, item in components:
@@ -60,8 +73,8 @@ def offer(
 
     def usable(option: ProductOption) -> bool:
         items = items_by_option[option.id]
-        has_lines = bool(items) or option.group_id is not None
-        return has_lines and all(item.is_active for item in items)
+        priced = bool(items) or (per_sqft and option.rate_per_sqft > 0)
+        return (priced or option.group_id is not None) and all(item.is_active for item in items)
 
     result = Offer(add_ons=[o for o in options if o.group_id is None and usable(o)])
     for group in groups:
@@ -86,6 +99,12 @@ class Picked:
     @property
     def options(self) -> list[ProductOption]:
         return [o for _, o in self.choices] + self.add_ons
+
+    def rates(self, product: Product) -> list[tuple[str, Decimal]]:
+        """Per-sq-ft products: the product's own rate, then each chosen option's extra."""
+        return [(product.name, product.rate_per_sqft)] + [
+            (o.name, o.rate_per_sqft) for o in self.options
+        ]
 
     def snapshot(self) -> dict[str, Any]:
         return {

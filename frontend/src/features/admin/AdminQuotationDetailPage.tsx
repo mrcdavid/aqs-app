@@ -26,9 +26,10 @@ import { Card, ErrorBanner, PageHeader } from '../../components/ui/Card'
 import { Field, inputClass } from '../../components/ui/Field'
 import { Modal } from '../../components/ui/Modal'
 import { messageOf } from '../../lib/errors'
-import { BASIS_LABEL, formatDate, formatMoney, trimDecimal, UNIT_LABEL } from '../../lib/format'
+import { formatDate, formatMoney, trimDecimal } from '../../lib/format'
 import { confirmAction, toast } from '../../stores/feedback'
 import type { adminQuotationDetailLoader } from './loaders'
+import { BreakdownLines, BreakdownSize, BreakdownSums } from './PriceBreakdown'
 
 type Review = 'approve' | 'reject' | 'cancel'
 
@@ -169,8 +170,9 @@ export function AdminQuotationDetailPage() {
                     <span className="font-medium tabular-nums">{money(item.amount)}</span>
                   </div>
                   <p className="text-muted">
-                    {trimDecimal(item.input_width)} × {trimDecimal(item.input_height)} {item.input_unit} ({item.width_mm} ×{' '}
-                    {item.height_mm} mm) · qty {item.quantity}
+                    {trimDecimal(item.input_width)} × {trimDecimal(item.input_height)} {item.input_unit} (
+                    {item.area_sqft ? `${trimDecimal(item.area_sqft)} sq ft` : `${item.width_mm} × ${item.height_mm} mm`}) · qty{' '}
+                    {item.quantity}
                   </p>
                   {item.choices.map((c) => (
                     <p key={c.group}>
@@ -221,7 +223,7 @@ export function AdminQuotationDetailPage() {
 
       <p className="text-sm text-muted">
         Prices below were frozen when the quotation was processed. The {who} only sees each item&apos;s amount and the
-        total (VAT included, not shown), and the 50/50 payment split.
+        total (VAT included, not shown), and the 50/50 payment split — never rates, costs or margins.
       </p>
       {q.items.map((item, i) => (
         <ItemBreakdown key={item.position} item={item} title={q.items.length === 1 ? 'Internal cost breakdown' : `Cost breakdown · item ${i + 1}: ${item.product_name}`} money={money} />
@@ -258,72 +260,20 @@ export function AdminQuotationDetailPage() {
   )
 }
 
-/** One item's frozen cost breakdown: lines, markup, VAT and rounding (staff only). */
+/** One item's frozen price breakdown: rates or cost lines, rounding, VAT, margin (staff only). */
 function ItemBreakdown({ item, title, money }: { item: AdminQuotationItem; title: string; money: (v: string) => string }) {
   const b = item.breakdown
+  const method =
+    b.pricing_method === 'per_sqft' ? 'Sold per sq ft' : b.pricing_method === 'computed' ? 'From materials + markup' : 'Priced before Oct 2026 (metric, VAT added)'
   return (
     <Card title={title} icon={Calculator}>
-      <div className="overflow-x-auto rounded-xl border border-line">
-        <table className="w-full text-left text-sm tabular-nums">
-          <thead className="bg-surface-2 text-xs tracking-wide text-muted uppercase">
-            <tr>
-              <th className="px-3 py-2 font-medium">Line</th>
-              <th className="px-3 py-2 font-medium">Measured by</th>
-              <th className="px-3 py-2 text-right font-medium">Qty</th>
-              <th className="px-3 py-2 text-right font-medium">Price</th>
-              <th className="px-3 py-2 text-right font-medium">Cost</th>
-            </tr>
-          </thead>
-          <tbody>
-            {b.lines.map((l, i) => (
-              <tr key={i} className="border-t border-line">
-                <td className="px-3 py-2">
-                  {l.label || l.name} <span className="font-mono text-xs text-muted">{l.code}</span>{' '}
-                  {l.option && (
-                    <Badge tone="brand" icon={PackagePlus}>
-                      {l.option}
-                    </Badge>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-muted">
-                  {BASIS_LABEL[l.basis]}
-                  {l.width_mm !== null && (l.width_mm !== b.width_mm || l.height_mm !== b.height_mm) && (
-                    <span className="block text-xs">
-                      at {l.width_mm} × {l.height_mm} mm
-                    </span>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-right">{trimDecimal(l.quantity)}</td>
-                <td className="px-3 py-2 text-right whitespace-nowrap">
-                  {money(l.unit_price)} <span className="text-muted">{UNIT_LABEL[l.unit]}</span>
-                </td>
-                <td className="px-3 py-2 text-right">{money(l.cost)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <p className="mb-3 text-sm text-muted">
+        {method} · <BreakdownSize b={b} />
+      </p>
+      <BreakdownLines b={b} money={money} codes />
+      <div className="mt-4">
+        <BreakdownSums b={b} money={money} amountLabel="Item amount" amount={item.amount} />
       </div>
-      <dl className="mt-4 ml-auto max-w-sm space-y-1.5 text-sm tabular-nums">
-        {[
-          ['Cost per piece', b.unit_subtotal],
-          [`Customer unit price (+${trimDecimal(b.markup_percent)}% markup)`, b.unit_price],
-          [`Cost × ${b.quantity}`, b.subtotal],
-          ['Markup', b.markup],
-          [`Subtotal (unit price × ${b.quantity})`, b.net],
-          [`VAT ${trimDecimal(b.vat_percent)}%`, b.vat],
-          ['Total incl. VAT', b.total],
-          [`Rounded up to the next ${trimDecimal(b.rounding_step)}`, b.rounding],
-        ].map(([label, value]) => (
-          <div key={label} className="flex justify-between gap-4">
-            <dt className="text-muted">{label}</dt>
-            <dd>{money(value)}</dd>
-          </div>
-        ))}
-        <div className="flex justify-between gap-4 border-t border-line pt-2 text-base font-semibold">
-          <dt>Item amount</dt>
-          <dd>{money(item.amount)}</dd>
-        </div>
-      </dl>
     </Card>
   )
 }

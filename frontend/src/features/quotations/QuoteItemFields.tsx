@@ -23,7 +23,7 @@ import type { CatalogProduct } from '../../api/quotations'
 import { Button, IconButton } from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
 import { Field, inputClass, RequiredMark, segmentClass } from '../../components/ui/Field'
-import { PRODUCT_CATEGORY_LABEL } from '../../lib/format'
+import { areaSqft, PRODUCT_CATEGORY_LABEL } from '../../lib/format'
 import { EMPTY_QUOTE_ITEM, fromMm, MAX_ITEMS, type QuoteFormValues } from './quoteItem'
 
 const CATEGORY_ICON: Record<ProductCategory, LucideIcon> = {
@@ -224,7 +224,11 @@ function AddOns({ index, product }: { index: number; product: CatalogProduct }) 
 function Size({ index, product }: { index: number; product: CatalogProduct | undefined }) {
   const { register, control, setValue, formState } = useFormContext<QuoteFormValues>()
   const errors = formState.errors.items?.[index]
-  const [unit, quantity] = useWatch({ control, name: [`items.${index}.unit`, `items.${index}.quantity`] })
+  const [unit, quantity, width, height] = useWatch({
+    control,
+    name: [`items.${index}.unit`, `items.${index}.quantity`, `items.${index}.width`, `items.${index}.height`],
+  })
+  const area = areaSqft(width, height, unit)
   const setQty = (q: number) => setValue(`items.${index}.quantity`, Math.min(100, Math.max(1, q || 1)), { shouldValidate: true })
   const range = (min: number, max: number) => `${fromMm(min, unit)}–${fromMm(max, unit)} ${unit}`
   const id = (name: string) => `item-${index}-${name}`
@@ -237,7 +241,7 @@ function Size({ index, product }: { index: number; product: CatalogProduct | und
           <RequiredMark />
         </p>
         <div role="radiogroup" aria-labelledby={id('unit')} className="inline-flex rounded-xl bg-surface-2 p-1">
-          {(['cm', 'in'] as const).map((u) => (
+          {(['in', 'cm'] as const).map((u) => (
             <label key={u} className={segmentClass}>
               <input type="radio" value={u} className="sr-only" {...register(`items.${index}.unit`)} />
               {u === 'cm' ? 'Centimetres' : 'Inches'}
@@ -256,7 +260,7 @@ function Size({ index, product }: { index: number; product: CatalogProduct | und
           <input
             id={id('width')}
             inputMode="decimal"
-            placeholder="e.g. 120"
+            placeholder={unit === 'in' ? 'e.g. 48' : 'e.g. 120'}
             className={`${inputClass} tabular-nums`}
             aria-invalid={!!errors?.width}
             {...register(`items.${index}.width`)}
@@ -272,7 +276,7 @@ function Size({ index, product }: { index: number; product: CatalogProduct | und
           <input
             id={id('height')}
             inputMode="decimal"
-            placeholder="e.g. 100"
+            placeholder={unit === 'in' ? 'e.g. 48' : 'e.g. 120'}
             className={`${inputClass} tabular-nums`}
             aria-invalid={!!errors?.height}
             {...register(`items.${index}.height`)}
@@ -294,6 +298,11 @@ function Size({ index, product }: { index: number; product: CatalogProduct | und
           </div>
         </Field>
       </div>
+      {area && (
+        <p className="text-sm text-muted" aria-live="polite">
+          About <strong className="text-ink tabular-nums">{area} sq ft</strong> per piece
+        </p>
+      )}
     </div>
   )
 }

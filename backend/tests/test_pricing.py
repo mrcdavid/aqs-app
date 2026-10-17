@@ -1,77 +1,167 @@
-"""Pricing math, checked against a worked example (no database)."""
+"""Pricing math (v2), checked against worked examples (no database)."""
 
+from dataclasses import replace
 from decimal import Decimal as D
+from typing import Literal
 
 import pytest
 
-from app.models import Basis, PriceUnit
+from app.models import Basis, PriceUnit, PricingMethod
 from app.services.pricing import (
     ComponentInput,
+    area_sqft,
     basis_value,
     compute_price,
     money,
     round_up,
+    to_inches,
     to_mm,
 )
 
 
-def line(basis: Basis, unit: PriceUnit, price: str, factor: str = "1", waste: str = "0"):
+def line(
+    basis: Basis,
+    unit: PriceUnit,
+    price: str,
+    factor: str = "1",
+    waste: str = "0",
+    *,
+    stock: tuple[str, str] | None = None,
+    kind: Literal["material", "labor"] = "material",
+) -> ComponentInput:
     return ComponentInput(
-        kind="material",
-        code=f"X-{basis}",
-        name=str(basis),
+        kind=kind,
+        code=f"X-{basis}-{unit}",
+        name=f"{basis} {unit}",
         label="",
         basis=basis,
         unit=unit,
         unit_price=D(price),
         factor=D(factor),
         waste_percent=D(waste),
+        stock_length=D(stock[0]) if stock else None,
+        stock_length_unit=stock[1] if stock else None,
     )
 
 
-# Sliding window 1200 x 1000 mm, quantity 2, markup 20%, VAT 12%.
+# Sliding window 48 x 48 in = 16 sq ft, perimeter 16 ft, width 4 ft.
 SLIDING_WINDOW = [
-    line(Basis.AREA, PriceUnit.SQM, "850", waste="5"),  # glass: 1.2 m² * 1.05 = 1.26 -> 1071.00
-    line(Basis.PERIMETER, PriceUnit.LM, "420", waste="10"),  # frame: 4.4 m * 1.1 = 4.84 -> 2032.80
-    line(Basis.WIDTH, PriceUnit.LM, "180", factor="2"),  # 2 tracks: 2.4 m -> 432.00
+    line(Basis.AREA, PriceUnit.SQFT, "45", waste="5"),  # glass: 16 * 1.05 = 16.8 sq ft -> 756.00
+    # frame + panel profile: 2 runs of 16 ft = 32 ft of 21-ft bars = 1.5238 -> 2 bars -> 3700.00
+    line(Basis.PERIMETER, PriceUnit.BAR, "1850", factor="2", stock=("21", "ft")),
+    line(Basis.WIDTH, PriceUnit.FT, "55", factor="2"),  # 2 tracks: 8 ft -> 440.00
     line(Basis.FIXED, PriceUnit.PIECE, "35", factor="4"),  # 4 rollers -> 140.00
-    line(Basis.AREA, PriceUnit.SQM, "650"),  # labour: 1.2 m² -> 780.00
+    line(Basis.PERIMETER, PriceUnit.KG, "320", factor="0.05"),  # jamb rubber 0.8 kg -> 256.00
+    line(Basis.AREA, PriceUnit.SQFT, "20", kind="labor"),  # labour 16 sq ft -> 320.00
 ]
+COSTS = [D("756.00"), D("3700.00"), D("440.00"), D("140.00"), D("256.00"), D("320.00")]
+SIZE = {"width_in": D(48), "height_in": D(48)}
+PHP = {"vat_percent": D(12), "currency": "PHP"}
 
 
-def test_worked_example() -> None:
+def test_computed_worked_example() -> None:
+    b = compute_price(SLIDING_WINDOW, **SIZE, quantity=2, markup_percent=D(20), **PHP)
+    assert b.pricing_method == "computed"
+    assert b.area_sqft == D("16.00")
+    assert [x.cost for x in b.lines] == COSTS
+    assert b.unit_subtotal == D("5612.00")
+    assert b.unit_price == D("6734.40")  # 5612 * 1.20
+    assert b.subtotal == D("11224.00")
+    assert b.markup == D("2244.80")
+    assert b.net == D("13468.80")
+    assert b.vat == D(0) and b.total == b.net  # prices include VAT: nothing is added
+    assert b.vat_included == D("1443.09")  # 13468.80 * 12 / 112
+    assert b.rounded_total == b.total  # rounding is off by default
+    assert b.margin == D("2244.80")
+
+
+def test_whole_bars_round_up() -> None:
+    frame = compute_price(SLIDING_WINDOW[1:2], **SIZE, quantity=1, **PHP).lines[0]
+    assert (frame.needed, frame.quantity, frame.cost) == (D("1.5238"), D(2), D("3700.00"))
+    assert (frame.stock_length, frame.stock_length_unit) == (D(21), "ft")
+
+
+def test_metre_bars_are_not_over_counted() -> None:
+    """600 cm wide, 2 runs = 12 m of 6-m bars: exactly 2 bars, not 3 (m -> ft precision)."""
+    runs = line(Basis.WIDTH, PriceUnit.BAR, "450", factor="2", stock=("6", "m"))
+    width = to_inches(D(600), "cm")
+    b = compute_price([runs], width_in=width, height_in=D(48), quantity=1, **PHP)
+    assert (b.lines[0].needed, b.lines[0].quantity) == (D("2.0000"), D(2))
+
+
+def test_grill_worked_example() -> None:
+    """48 x 48 grill: 3.5 bars of 10 mm square bar (6 m) -> 4 bars + labour per grill."""
+    grill = [
+        line(Basis.AREA, PriceUnit.BAR, "450", factor="0.2188", stock=("6", "m")),  # bars/sq ft
+        line(Basis.FIXED, PriceUnit.PIECE, "500", kind="labor"),
+    ]
+    b = compute_price(grill, **SIZE, quantity=1, markup_percent=D(20), rounding_step=D(100), **PHP)
+    assert (b.lines[0].needed, b.lines[0].quantity) == (D("3.5008"), D(4))
+    assert b.unit_subtotal == D("2300.00")  # 4 * 450 + 500
+    assert b.unit_price == D("2760.00")
+    assert b.rounded_total == D("2800.00")
+
+
+def test_per_sqft_worked_example() -> None:
+    """Window 48 x 48 in, 1/4 bronze 350/sq ft + open back 40/sq ft: 16 * 390 = 6,240 -> 6,300."""
     b = compute_price(
         SLIDING_WINDOW,
-        width_mm=1200,
-        height_mm=1000,
-        quantity=2,
-        markup_percent=D("20"),
-        vat_percent=D("12"),
-        currency="PHP",
+        **SIZE,
+        quantity=1,
+        method=PricingMethod.PER_SQFT,
+        rates=[("Sliding window", D(0)), ("1/4 Bronze", D(350)), ("Open back", D(40))],
+        markup_percent=D(20),  # ignored: the owner's rate is the selling price
+        rounding_step=D(100),
+        **PHP,
     )
-    assert [line.cost for line in b.lines] == [
-        D("1071.00"),
-        D("2032.80"),
-        D("432.00"),
-        D("140.00"),
-        D("780.00"),
+    assert [(r.name, r.rate_per_sqft) for r in b.rates] == [
+        ("1/4 Bronze", D(350)),
+        ("Open back", D(40)),
     ]
-    assert b.unit_subtotal == D("4455.80")
-    assert b.unit_price == D("5346.96")  # 4455.80 * 1.20, what the customer sees per piece
-    assert b.subtotal == D("8911.60")
-    assert b.markup == D("1782.32")
-    assert b.net == D("10693.92")
-    assert b.vat == D("1283.27")  # 1283.2704 rounded
-    assert b.total == D("11977.19")
-    assert b.rounding_step == D(0) and b.rounded_total == b.total  # rounding is off by default
+    assert b.rate_per_sqft == D(390)
+    assert b.unit_price == D("6240.00")
+    assert (b.markup_percent, b.markup, b.vat) == (D(0), D(0), D(0))
+    assert b.rounded_total == D("6300.00")
+    assert b.vat_included == D("675.00")  # 6300 * 12 / 112
+    assert b.unit_subtotal == D("5612.00")  # the template is the cost guide
+    assert b.margin == D("688.00")
+    assert b.warnings == []
 
 
-def test_basis_values() -> None:
-    assert basis_value(Basis.AREA, 1500, 2000) == D("3")
-    assert basis_value(Basis.PERIMETER, 1500, 2000) == D("7")
-    assert basis_value(Basis.WIDTH, 1500, 2000) == D("1.5")
-    assert basis_value(Basis.HEIGHT, 1500, 2000) == D("2")
-    assert basis_value(Basis.FIXED, 1500, 2000) == D("1")
+def test_per_sqft_without_lines_or_rate() -> None:
+    b = compute_price([], **SIZE, quantity=3, method=PricingMethod.PER_SQFT, **PHP)
+    assert b.unit_price == D(0) and b.unit_subtotal == D(0)
+    assert b.warnings == ["No rate per sq ft is set, so the price is 0"]
+    b = compute_price(
+        [], **SIZE, quantity=3, method=PricingMethod.PER_SQFT, rates=[("W", D(100))], **PHP
+    )
+    assert (b.unit_price, b.net) == (D("1600.00"), D("4800.00"))
+
+
+def test_basis_values_in_feet() -> None:
+    assert basis_value(Basis.AREA, D(36), D(48)) == D(12)  # sq ft
+    assert basis_value(Basis.PERIMETER, D(36), D(48)) == D(14)  # ft
+    assert basis_value(Basis.WIDTH, D(36), D(48)) == D(3)
+    assert basis_value(Basis.HEIGHT, D(36), D(48)) == D(4)
+    assert basis_value(Basis.FIXED, D(36), D(48)) == D(1)
+
+
+def test_area_from_inches_and_cm() -> None:
+    assert area_sqft(D(48), D(48)) == D("16.00")
+    assert area_sqft(D("47.5"), D(36)) == D("11.88")  # 11.875
+    # 120 x 100 cm = 1.2 m² = 12.9167 sq ft, from the exact inches (not rounded mm)
+    assert area_sqft(to_inches(D(120), "cm"), to_inches(D(100), "cm")) == D("12.92")
+    b = compute_price(
+        [], width_in=to_inches(D(120), "cm"), height_in=to_inches(D(100), "cm"), quantity=1,
+        method=PricingMethod.PER_SQFT, rates=[("W", D(100))], **PHP,
+    )  # fmt: skip
+    assert (b.width_in, b.height_in, b.width_mm, b.height_mm) == (
+        D("47.24"),
+        D("39.37"),
+        1200,
+        1000,
+    )
+    assert b.unit_price == D("1292.00")
 
 
 @pytest.mark.parametrize(
@@ -79,7 +169,7 @@ def test_basis_values() -> None:
     [("120", "cm", 1200), ("120.04", "cm", 1200), ("120.05", "cm", 1201), ("48", "in", 1219)],
 )
 def test_unit_conversion(value: str, unit: str, mm: int) -> None:
-    assert to_mm(D(value), unit) == mm  # type: ignore[arg-type]
+    assert to_mm(D(value), unit) == mm  # type: ignore[arg-type]  # parametrized literals
 
 
 @pytest.mark.parametrize(
@@ -100,17 +190,11 @@ def test_round_up(amount: str, step: str, expected: str) -> None:
 
 def test_rounded_total_is_never_below_total() -> None:
     b = compute_price(
-        SLIDING_WINDOW,
-        width_mm=1200,
-        height_mm=1000,
-        quantity=2,
-        markup_percent=D("20"),
-        vat_percent=D("12"),
-        currency="PHP",
-        rounding_step=D("100"),
+        SLIDING_WINDOW, **SIZE, quantity=2, markup_percent=D(20), rounding_step=D(100), **PHP
     )
-    assert b.total == D("11977.19")  # the exact price is kept for the admin breakdown
-    assert (b.rounding, b.rounded_total) == (D("22.81"), D("12000.00"))
+    assert b.total == D("13468.80")  # the exact price is kept for the admin breakdown
+    assert (b.rounding, b.rounded_total) == (D("31.20"), D("13500.00"))
+    assert b.vat_included == D("1446.43")  # of the rounded total: 13500 * 12 / 112
 
 
 def test_money_rounds_half_up() -> None:
@@ -119,46 +203,33 @@ def test_money_rounds_half_up() -> None:
 
 
 def test_rejects_empty_template_and_bad_sizes() -> None:
-    kwargs = {"markup_percent": D(0), "vat_percent": D(12), "currency": "PHP"}
     with pytest.raises(ValueError, match="no components"):
-        compute_price([], width_mm=1000, height_mm=1000, quantity=1, **kwargs)
+        compute_price([], **SIZE, quantity=1, **PHP)
     with pytest.raises(ValueError, match="positive"):
-        compute_price(SLIDING_WINDOW, width_mm=0, height_mm=1000, quantity=1, **kwargs)
+        compute_price(SLIDING_WINDOW, width_in=D(0), height_in=D(48), quantity=1, **PHP)
+    no_length = replace(SLIDING_WINDOW[1], stock_length=None)
+    with pytest.raises(ValueError, match="bar length"):
+        compute_price([no_length], **SIZE, quantity=1, **PHP)
 
 
 def test_add_on_lines_are_priced_and_tagged() -> None:
-    open_back = ComponentInput(
-        kind="material",
-        code="AL-OPENBACK",
-        name="Open back aluminum",
-        label="",
-        basis=Basis.PERIMETER,
-        unit=PriceUnit.LM,
-        unit_price=D("300"),
-        factor=D("1"),
-        waste_percent=D("0"),
-        option="Open back aluminum",
+    open_back = replace(
+        line(Basis.PERIMETER, PriceUnit.FT, "90"), code="AL-OPENBACK", option="Open back"
     )
-    kwargs = {"markup_percent": D(0), "vat_percent": D(0), "currency": "PHP"}
-    base = compute_price(SLIDING_WINDOW, width_mm=1200, height_mm=1000, quantity=1, **kwargs)
-    extra = compute_price(
-        [*SLIDING_WINDOW, open_back], width_mm=1200, height_mm=1000, quantity=1, **kwargs
-    )
-    assert all(line.option == "" for line in base.lines)
-    assert extra.lines[-1].option == "Open back aluminum"
-    assert extra.lines[-1].cost == D("1320.00")  # 4.4 m around the window x 300
-    assert extra.total == base.total + D("1320.00")  # grows with the size, like any line
+    base = compute_price(SLIDING_WINDOW, **SIZE, quantity=1, **PHP)
+    extra = compute_price([*SLIDING_WINDOW, open_back], **SIZE, quantity=1, **PHP)
+    assert all(x.option == "" for x in base.lines)
+    assert extra.lines[-1].option == "Open back"
+    assert extra.lines[-1].cost == D("1440.00")  # 16 ft around the window x 90
+    assert extra.total == base.total + D("1440.00")  # grows with the size, like any line
 
 
 def test_lines_can_be_measured_smaller() -> None:
     """Inside an open back frame the window is smaller than the opening typed."""
-    glass = line(Basis.AREA, PriceUnit.SQM, "1000")
-    inner = ComponentInput(
-        **{**glass.__dict__, "width_reduction_mm": 100, "height_reduction_mm": 100}
-    )
-    kwargs = {"markup_percent": D(0), "vat_percent": D(0), "currency": "PHP"}
-    b = compute_price([glass, inner], width_mm=1200, height_mm=1000, quantity=1, **kwargs)
-    assert [(x.width_mm, x.height_mm) for x in b.lines] == [(1200, 1000), (1100, 900)]
-    assert [x.cost for x in b.lines] == [D("1200.00"), D("990.00")]  # 1.2 m² vs 0.99 m²
+    glass = line(Basis.AREA, PriceUnit.SQFT, "100")
+    inner = replace(glass, width_reduction_in=D(4), height_reduction_in=D(4))
+    b = compute_price([glass, inner], **SIZE, quantity=1, **PHP)
+    assert [(x.width_in, x.height_in) for x in b.lines] == [(D(48), D(48)), (D(44), D(44))]
+    assert [x.cost for x in b.lines] == [D("1600.00"), D("1344.44")]  # 16 vs 13.4444 sq ft
     with pytest.raises(ValueError, match="too small"):
-        compute_price([inner], width_mm=100, height_mm=1000, quantity=1, **kwargs)
+        compute_price([inner], width_in=D(4), height_in=D(48), quantity=1, **PHP)

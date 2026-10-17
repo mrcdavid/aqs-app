@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Package, Pencil, Plus, Save, X } from 'lucide-react'
 import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 
 import { Button } from '../../components/ui/Button'
 import { ErrorBanner, SectionLabel } from '../../components/ui/Card'
@@ -10,6 +10,7 @@ import { Modal } from '../../components/ui/Modal'
 import { messageOf } from '../../lib/errors'
 import { PRODUCT_CATEGORY_LABEL } from '../../lib/format'
 import { productSchema, type ProductForm as ProductFormValues } from './schemas'
+import { useCurrency } from './useCurrency'
 
 const SIZE_FIELDS = [
   ['min_width_mm', 'Min width'],
@@ -41,7 +42,7 @@ export function ProductFormModal({ open, mode, initial, code, onClose, onSave }:
       title={isNew ? 'New product' : `Edit product ${code ?? ''}`}
       description={
         isNew
-          ? 'After creating it you will add its price template (materials and labour).'
+          ? 'After creating it you will add its materials and labour (its price, or a cost guide).'
           : 'Changes apply to new quotations. Existing quotations keep their details.'
       }
       footer={
@@ -70,13 +71,20 @@ export function ProductFormModal({ open, mode, initial, code, onClose, onSave }:
   )
 }
 
+const METHODS = [
+  ['per_sqft', 'Per sq ft', 'You set the selling rate (e.g. sliding windows). Glass types and add-ons can add their own rate. Materials are a cost guide.'],
+  ['computed', 'From materials', 'Priced from its materials and labour plus the markup in Settings (e.g. grills: whole bars + labour per grill).'],
+] as const
+
 function ProductFields({ initial, onSubmit }: { initial: ProductFormValues; onSubmit: (v: ProductFormValues) => Promise<void> }) {
   const [error, setError] = useState<string | null>(null)
-  const { register, handleSubmit, formState } = useForm<ProductFormValues>({
+  const currency = useCurrency()
+  const { register, handleSubmit, formState, control } = useForm<ProductFormValues>({
     resolver: zodResolver(productSchema),
     defaultValues: initial,
   })
   const { errors, isSubmitting } = formState
+  const method = useWatch({ control, name: 'pricing_method' })
 
   return (
     <form
@@ -118,6 +126,36 @@ function ProductFields({ initial, onSubmit }: { initial: ProductFormValues; onSu
           >
             <textarea id="p-description" rows={2} className={inputClass} {...register('description')} />
           </Field>
+        </div>
+        <div className="space-y-3">
+          <SectionLabel>How it is priced</SectionLabel>
+          <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="How it is priced">
+            {METHODS.map(([value, label, text]) => (
+              <label
+                key={value}
+                className={`flex cursor-pointer gap-3 rounded-xl border p-3 text-sm ${
+                  method === value ? 'border-transparent bg-brand-soft ring-2 ring-ring' : 'border-line hover:bg-surface-2'
+                }`}
+              >
+                <input type="radio" value={value} className="mt-0.5 accent-brand" {...register('pricing_method')} />
+                <span>
+                  <span className="font-medium">{label}</span>
+                  <span className="mt-0.5 block text-xs text-muted">{text}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          {method === 'per_sqft' && (
+            <Field
+              label={`Base rate per sq ft (${currency})`}
+              htmlFor="p-rate"
+              required
+              error={errors.rate_per_sqft?.message}
+              hint="VAT included. Each glass type or add-on adds its own rate; 0 if the glass type carries the whole rate."
+            >
+              <input id="p-rate" inputMode="decimal" className={`${inputClass} tabular-nums sm:w-48`} aria-invalid={!!errors.rate_per_sqft} {...register('rate_per_sqft')} />
+            </Field>
+          )}
         </div>
         <div className="space-y-3">
           <SectionLabel>Allowed size (millimetres)</SectionLabel>

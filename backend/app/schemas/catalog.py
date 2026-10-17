@@ -14,7 +14,8 @@ from pydantic import (
     model_validator,
 )
 
-from app.models import Basis, MaterialCategory, PriceUnit, ProductCategory
+from app.models import Basis, MaterialCategory, PriceUnit, PricingMethod, ProductCategory
+from app.models.catalog import StockUnit
 from app.schemas.common import OptionalPersonName
 
 
@@ -50,21 +51,46 @@ class _Out(BaseModel):
 
 # ---------- materials ----------
 
+# Bars: the length one bar is sold in (21 ft, 6 m). Only for unit "bar".
+StockLength = Annotated[Decimal, Field(gt=0, le=1000, max_digits=8, decimal_places=2)]
+# Labour is paid per piece (job), per foot or per sq ft; never per kilo or per bar.
+LaborUnit = Literal["piece", "ft", "sqft"]
+
+
+def check_stock_length(
+    unit: PriceUnit, length: Decimal | None, length_unit: StockUnit | None
+) -> None:
+    if unit == PriceUnit.BAR and (length is None or length_unit is None):
+        raise ValueError("a bar needs its length, e.g. 21 ft or 6 m")
+    if unit != PriceUnit.BAR and (length is not None or length_unit is not None):
+        raise ValueError("only items sold per bar have a bar length")
+
 
 class MaterialIn(_In):
     code: Code
     name: Name
     category: MaterialCategory
     unit: PriceUnit
-    unit_price: Price
+    unit_price: Price  # bars: price of one whole bar
+    stock_length: StockLength | None = None
+    stock_length_unit: StockUnit | None = None
+
+    @model_validator(mode="after")
+    def bar_length(self) -> Self:
+        check_stock_length(self.unit, self.stock_length, self.stock_length_unit)
+        return self
 
 
 class MaterialUpdate(_In):
+    """Bar length: send it with (or after) unit "bar"; changing to another unit clears it."""
+
     code: Code | None = None
     name: Name | None = None
     category: MaterialCategory | None = None
     unit: PriceUnit | None = None
     unit_price: Price | None = None
+    stock_length: StockLength | None = None
+    stock_length_unit: StockUnit | None = None
     is_active: bool | None = None
 
 
@@ -75,6 +101,8 @@ class MaterialOut(_Out):
     category: MaterialCategory
     unit: PriceUnit
     unit_price: Decimal
+    stock_length: Decimal | None
+    stock_length_unit: str | None
     is_active: bool
     updated_at: datetime
 
@@ -85,14 +113,14 @@ class MaterialOut(_Out):
 class LaborRateIn(_In):
     code: Code
     name: Name
-    unit: PriceUnit
+    unit: LaborUnit
     rate: Price
 
 
 class LaborRateUpdate(_In):
     code: Code | None = None
     name: Name | None = None
-    unit: PriceUnit | None = None
+    unit: LaborUnit | None = None
     rate: Price | None = None
     is_active: bool | None = None
 
@@ -119,6 +147,10 @@ class ProductIn(_In):
     max_width_mm: Millimetres
     min_height_mm: Millimetres
     max_height_mm: Millimetres
+    # per_sqft: sold at rate_per_sqft (+ chosen options' rates), VAT included; the template is a
+    # cost guide. computed: priced from the template lines + markup.
+    pricing_method: PricingMethod = PricingMethod.COMPUTED
+    rate_per_sqft: Price = Decimal(0)
 
     @model_validator(mode="after")
     def ranges(self) -> Self:
@@ -136,6 +168,8 @@ class ProductUpdate(_In):
     max_width_mm: Millimetres | None = None
     min_height_mm: Millimetres | None = None
     max_height_mm: Millimetres | None = None
+    pricing_method: PricingMethod | None = None
+    rate_per_sqft: Price | None = None
     is_active: bool | None = None
 
 
@@ -149,6 +183,8 @@ class ProductOut(_Out):
     max_width_mm: int
     min_height_mm: int
     max_height_mm: int
+    pricing_method: PricingMethod
+    rate_per_sqft: Decimal
     is_active: bool
     updated_at: datetime
 
@@ -182,6 +218,7 @@ class OptionIn(_In):
     sort_order: int = Field(default=0, ge=0, le=1000)
     width_reduction_mm: Reduction = 0
     height_reduction_mm: Reduction = 0
+    rate_per_sqft: Price = Decimal(0)  # per-sq-ft products: added to the rate when chosen
 
 
 class OptionUpdate(_In):
@@ -190,6 +227,7 @@ class OptionUpdate(_In):
     sort_order: int | None = Field(default=None, ge=0, le=1000)
     width_reduction_mm: Reduction | None = None
     height_reduction_mm: Reduction | None = None
+    rate_per_sqft: Price | None = None
 
 
 class OptionOut(_Out):
@@ -200,6 +238,7 @@ class OptionOut(_Out):
     sort_order: int
     width_reduction_mm: int
     height_reduction_mm: int
+    rate_per_sqft: Decimal
 
 
 class ComponentIn(_In):
@@ -239,6 +278,8 @@ class ComponentOut(BaseModel):
     item_name: str
     item_unit: PriceUnit
     item_price: Decimal
+    item_stock_length: Decimal | None = None
+    item_stock_length_unit: str | None = None
     item_active: bool
     basis: Basis
     factor: Decimal
@@ -295,25 +336,45 @@ class PricePreviewIn(_In):
 
 
 class PriceLineOut(BaseModel):
+    """Also reads stored snapshots: before v2, units were "sqm"/"lm" and sizes in mm."""
+
     kind: str
     code: str
     name: str
     label: str
     basis: Basis
-    unit: PriceUnit
+    unit: str
     unit_price: Decimal
     quantity: Decimal
     cost: Decimal
     option: str = ""  # add-on name; "" = always included (and in snapshots before add-ons)
-    width_mm: int | None = None  # size this line was measured at (None in older snapshots)
+    needed: Decimal | None = None  # bars: before rounding up to whole bars
+    stock_length: Decimal | None = None
+    stock_length_unit: str | None = None
+    width_in: Decimal | None = None  # size this line was measured at (v2)
+    height_in: Decimal | None = None
+    width_mm: int | None = None  # ... in snapshots between add-ons and v2
     height_mm: int | None = None
 
 
+class RateLineOut(BaseModel):
+    name: str
+    rate_per_sqft: Decimal
+
+
 class PricePreviewOut(BaseModel):
+    """A price breakdown (preview, or an item's stored snapshot). v2 fields are None before v2."""
+
+    pricing_method: PricingMethod | None = None  # None: priced before v2 (VAT added on top)
     width_mm: int
     height_mm: int
+    width_in: Decimal | None = None
+    height_in: Decimal | None = None
+    area_sqft: Decimal | None = None
     quantity: int
     lines: list[PriceLineOut]
+    rates: list[RateLineOut] = []
+    rate_per_sqft: Decimal | None = None
     unit_subtotal: Decimal
     unit_price: Decimal
     subtotal: Decimal
@@ -326,5 +387,24 @@ class PricePreviewOut(BaseModel):
     rounding_step: Decimal
     rounding: Decimal
     rounded_total: Decimal
+    vat_included: Decimal | None = None
+    margin: Decimal | None = None
     currency: str
     warnings: list[str]
+
+
+class RaiseRatesIn(_In):
+    """Raise (or lower) every per-sq-ft rate: products' own rates and their options' extras."""
+
+    percent: Annotated[Decimal, Field(ge=-50, le=100, max_digits=5, decimal_places=2)]
+
+    @model_validator(mode="after")
+    def not_zero(self) -> Self:
+        if self.percent == 0:
+            raise ValueError("percent must not be 0")
+        return self
+
+
+class RaiseRatesOut(BaseModel):
+    products: int
+    options: int

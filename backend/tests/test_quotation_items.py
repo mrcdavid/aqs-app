@@ -18,8 +18,8 @@ from tests.test_quotations import (  # noqa: F401 - fixtures
     product_id,
 )
 
-WINDOW = {**REQUEST}  # 120 x 100 cm, quantity 2 -> 12,000.00 (see test_quotations)
-SMALL = {"width": "60", "height": "60", "unit": "cm", "quantity": 1}  # -> 2,800.00
+WINDOW = {**REQUEST}  # 48 x 48 in, quantity 2 -> 13,500.00 (see test_quotations)
+SMALL = {"width": "24", "height": "24", "unit": "in", "quantity": 1}  # 2,607 x 1.2 -> 3,200.00
 
 
 def body(product_id: str, *sizes: dict[str, Any]) -> dict[str, Any]:
@@ -37,19 +37,19 @@ async def test_two_items_make_one_quotation(
 ):
     q = await create(customer, body(product_id, WINDOW, SMALL))
     assert [i["position"] for i in q["items"]] == [0, 1]
-    assert [i["amount"] for i in q["items"]] == ["12000.00", "2800.00"]  # each rounded up
-    assert q["subtotal"] == q["total"] == "14800.00" and q["adjustment"] == "0.00"
-    assert (q["downpayment"], q["balance"]) == ("7400.00", "7400.00")
+    assert [i["amount"] for i in q["items"]] == ["13500.00", "3200.00"]  # each rounded up
+    assert q["subtotal"] == q["total"] == "16700.00" and q["adjustment"] == "0.00"
+    assert (q["downpayment"], q["balance"]) == ("8350.00", "8350.00")
 
     # Lists show every item; admins see each item's own breakdown.
     mine = (await customer.get(f"{API}/quotations")).json()
-    assert [i["width_mm"] for i in mine[0]["items"]] == [1200, 600]
+    assert [i["width_mm"] for i in mine[0]["items"]] == [1219, 610]
     detail = (await admin.get(f"{API}/admin/quotations/{q['id']}")).json()
-    assert [i["breakdown"]["rounded_total"] for i in detail["items"]] == ["12000.00", "2800.00"]
+    assert [i["breakdown"]["rounded_total"] for i in detail["items"]] == ["13500.00", "3200.00"]
 
     monkeypatch.setattr(reportlab.rl_config, "pageCompression", 0)
     pdf = (await customer.get(f"{API}/quotations/{q['id']}/pdf")).content
-    for text in (b"12,000.00", b"2,800.00", b"14,800.00", b"7,400.00"):
+    for text in (b"13,500.00", b"3,200.00", b"16,700.00", b"8,350.00"):
         assert text in pdf
     assert b"Adjustment" not in pdf
 
@@ -73,17 +73,17 @@ async def test_changed_total_shows_as_an_adjustment(
     # The official PDF is saved on approval, so make its text readable before approving.
     monkeypatch.setattr(reportlab.rl_config, "pageCompression", 0)
     q = await create(customer, body(product_id, WINDOW, SMALL))
-    r = await admin.post(f"{API}/admin/quotations/{q['id']}/approve", json={"final_total": "14500"})
-    assert r.json()["total"] == "14500.00" and r.json()["total_adjusted"] is True
+    r = await admin.post(f"{API}/admin/quotations/{q['id']}/approve", json={"final_total": "16500"})
+    assert r.json()["total"] == "16500.00" and r.json()["total_adjusted"] is True
 
     mine = (await customer.get(f"{API}/quotations/{q['id']}")).json()
     assert (mine["subtotal"], mine["adjustment"], mine["total"]) == (
-        "14800.00",
-        "-300.00",
-        "14500.00",
+        "16700.00",
+        "-200.00",
+        "16500.00",
     )
     pdf = (await customer.get(f"{API}/quotations/{q['id']}/pdf")).content
-    assert b"Subtotal" in pdf and b"Adjustment" in pdf and b"- PHP 300.00" in pdf
+    assert b"Subtotal" in pdf and b"Adjustment" in pdf and b"- PHP 200.00" in pdf
 
 
 async def test_dashboard_counts_a_quotation_once_per_product(
@@ -93,6 +93,6 @@ async def test_dashboard_counts_a_quotation_once_per_product(
     await admin.post(f"{API}/admin/quotations/{q['id']}/approve", json={})
     d = (await admin.get(f"{API}/admin/dashboard")).json()
     assert [(p["label"], p["approved"], p["approved_value"]) for p in d["by_product"]] == [
-        ("Standard sliding window", 1, "14800.00")
+        ("Standard sliding window", 1, "16700.00")
     ]
     assert d["top_projects"][0]["product_name"] == "Standard sliding window + 1 more"

@@ -1,29 +1,63 @@
-import type { Basis, MaterialCategory, PriceUnit, ProductCategory } from '../api/admin'
+import type { Basis, LegacyUnit, MaterialCategory, PriceUnit, ProductCategory } from '../api/admin'
 
 // Display only. Amounts arrive as decimal strings computed by the server.
 export function formatMoney(amount: string, currency = 'PHP'): string {
   return new Intl.NumberFormat('en-PH', { style: 'currency', currency }).format(Number(amount))
 }
 
-export const UNIT_LABEL: Record<PriceUnit, string> = {
+/** Includes the metric units of quotations priced before v2. */
+export const UNIT_LABEL: Record<PriceUnit | LegacyUnit, string> = {
+  piece: 'per piece',
+  kg: 'per kilo',
+  ft: 'per foot',
+  sqft: 'per sq ft',
+  bar: 'per bar',
   sqm: 'per m²',
   lm: 'per metre',
-  piece: 'per piece',
+}
+
+/** Short unit for quantities: "16.8 sq ft", "2 bars", "0.8 kg". */
+export const QTY_UNIT: Record<PriceUnit | LegacyUnit, string> = {
+  piece: 'pc',
+  kg: 'kg',
+  ft: 'ft',
+  sqft: 'sq ft',
+  bar: 'bar',
+  sqm: 'm²',
+  lm: 'm',
 }
 
 export const BASIS_LABEL: Record<Basis, string> = {
-  area: 'Area (m²)',
-  perimeter: 'Perimeter (m)',
-  width: 'Width (m)',
-  height: 'Height (m)',
+  area: 'Area (sq ft)',
+  perimeter: 'Perimeter (ft)',
+  width: 'Width (ft)',
+  height: 'Height (ft)',
   fixed: 'Fixed count',
 }
 
-/** Which measurement fits each price unit (mirrors BASIS_UNIT in the backend). */
+const LENGTHS: Basis[] = ['perimeter', 'width', 'height']
+/** Which measurements fit each unit (mirrors BASES_FOR_UNIT in the backend). Bars: a length
+ * (feet needed / bar length), an area (factor = bars per sq ft, e.g. grills) or a fixed count. */
 export const BASES_FOR_UNIT: Record<PriceUnit, Basis[]> = {
-  sqm: ['area'],
-  lm: ['perimeter', 'width', 'height'],
   piece: ['fixed'],
+  kg: [...LENGTHS, 'area', 'fixed'],
+  ft: LENGTHS,
+  sqft: ['area'],
+  bar: [...LENGTHS, 'area', 'fixed'],
+}
+
+/** "21 ft bar", "6 m bar" */
+export function barLabel(length: string | null | undefined, unit: string | null | undefined): string {
+  return length && unit ? `${trimDecimal(length)} ${unit} bar` : 'bar'
+}
+
+/** Area of one piece from the typed size, as the server works it out (sq ft, 2 dp). */
+export function areaSqft(width: string, height: string, unit: 'cm' | 'in'): string | null {
+  const w = Number(width)
+  const h = Number(height)
+  if (!(w > 0 && h > 0)) return null
+  const inches = unit === 'in' ? 1 : 1 / 2.54
+  return trimDecimal(((w * inches * h * inches) / 144).toFixed(2))
 }
 
 export const MATERIAL_CATEGORY_LABEL: Record<MaterialCategory, string> = {
@@ -47,9 +81,14 @@ export function itemsTitle(items: { product_name: string }[]): string {
   return rest.length ? `${first.product_name} + ${rest.length} more` : first.product_name
 }
 
-/** "1200 × 1000 mm · qty 2" for one item, or "3 items · 5 pieces" for several. */
-export function itemsDetail(items: { width_mm: number; height_mm: number; quantity: number }[]): string {
-  if (items.length === 1) return `${items[0].width_mm} × ${items[0].height_mm} mm · qty ${items[0].quantity}`
+/** "48 × 48 in · qty 2" for one item, or "3 items · 5 pieces" for several. */
+export function itemsDetail(
+  items: { input_width: string; input_height: string; input_unit: string; quantity: number }[],
+): string {
+  if (items.length === 1) {
+    const [i] = items
+    return `${trimDecimal(i.input_width)} × ${trimDecimal(i.input_height)} ${i.input_unit} · qty ${i.quantity}`
+  }
   const pieces = items.reduce((n, i) => n + i.quantity, 0)
   return `${items.length} items · ${pieces} pieces`
 }

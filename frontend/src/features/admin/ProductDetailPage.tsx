@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Info, Package, Pencil, Ruler, Tag } from 'lucide-react'
+import { Archive, ArchiveRestore, Calculator, Info, Package, Pencil, Ruler, Tag } from 'lucide-react'
 import { useState } from 'react'
 import { useLoaderData, useRevalidator } from 'react-router'
 
@@ -7,16 +7,18 @@ import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Card, PageHeader } from '../../components/ui/Card'
 import { messageOf } from '../../lib/errors'
-import { PRODUCT_CATEGORY_LABEL } from '../../lib/format'
+import { formatMoney, PRODUCT_CATEGORY_LABEL } from '../../lib/format'
 import { confirmAction, toast } from '../../stores/feedback'
 import type { productDetailLoader } from './loaders'
 import { PricePreviewPanel } from './PricePreviewPanel'
 import { ProductFormModal } from './ProductForm'
 import { TemplateEditor } from './TemplateEditor'
+import { useCurrency } from './useCurrency'
 
 export function ProductDetailPage() {
   const { product, materials, laborRates } = useLoaderData<typeof productDetailLoader>()
   const { revalidate } = useRevalidator()
+  const currency = useCurrency()
   const [editing, setEditing] = useState(false)
   const [archiving, setArchiving] = useState(false)
 
@@ -70,12 +72,23 @@ export function ProductDetailPage() {
       </PageHeader>
 
       <Card title="Details" icon={Info}>
-        <dl className="grid gap-4 text-sm sm:grid-cols-3">
+        <dl className="grid gap-4 text-sm sm:grid-cols-4">
           <div className="flex items-start gap-3">
             <Tag className="mt-0.5 size-4 text-muted" aria-hidden />
             <div>
               <dt className="text-muted">Category</dt>
               <dd className="font-medium">{PRODUCT_CATEGORY_LABEL[product.category]}</dd>
+            </div>
+          </div>
+          <div className="flex items-start gap-3">
+            <Calculator className="mt-0.5 size-4 text-muted" aria-hidden />
+            <div>
+              <dt className="text-muted">Priced</dt>
+              <dd className="font-medium tabular-nums">
+                {product.pricing_method === 'per_sqft'
+                  ? `Per sq ft · base ${formatMoney(product.rate_per_sqft, currency)}`
+                  : 'From materials + markup'}
+              </dd>
             </div>
           </div>
           <div className="flex items-start gap-3">
@@ -97,7 +110,7 @@ export function ProductDetailPage() {
             </div>
           </div>
           {product.description && (
-            <div className="sm:col-span-3">
+            <div className="sm:col-span-4">
               <dt className="text-muted">Description</dt>
               <dd className="whitespace-pre-line">{product.description}</dd>
             </div>
@@ -122,6 +135,8 @@ export function ProductDetailPage() {
           max_width_mm: product.max_width_mm,
           min_height_mm: product.min_height_mm,
           max_height_mm: product.max_height_mm,
+          pricing_method: product.pricing_method,
+          rate_per_sqft: product.rate_per_sqft,
         }}
         onClose={() => setEditing(false)}
         onSave={async (values) => {

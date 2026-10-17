@@ -16,19 +16,32 @@ from app.models import (
     ProductComponent,
     ProductOption,
 )
-from app.models.catalog import BASIS_UNIT
-from app.services.pricing import ComponentInput
+from app.models.catalog import BASES_FOR_UNIT
+from app.services.pricing import ComponentInput, mm_to_inches
 
-UNIT_WORDS = {PriceUnit.SQM: "per m²", PriceUnit.LM: "per metre", PriceUnit.PIECE: "per piece"}
+UNIT_WORDS = {
+    PriceUnit.PIECE: "per piece",
+    PriceUnit.KG: "per kilo",
+    PriceUnit.FT: "per foot",
+    PriceUnit.SQFT: "per sq ft",
+    PriceUnit.BAR: "per bar",
+}
+BASIS_WORDS = {
+    Basis.AREA: "area",
+    Basis.PERIMETER: "perimeter",
+    Basis.WIDTH: "width",
+    Basis.HEIGHT: "height",
+    Basis.FIXED: "fixed",
+}
 
 
 def ensure_basis_matches(basis: Basis, unit: PriceUnit) -> None:
-    expected = BASIS_UNIT[basis]
-    if unit != expected:
+    allowed = BASES_FOR_UNIT[unit]
+    if basis not in allowed:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"Basis '{basis}' needs an item priced {UNIT_WORDS[expected]}, "
-            f"but this item is priced {UNIT_WORDS[unit]}",
+            f"An item priced {UNIT_WORDS[unit]} can be measured by "
+            f"{' / '.join(BASIS_WORDS[b] for b in allowed)}, not by {BASIS_WORDS[basis]}",
         )
 
 
@@ -117,8 +130,10 @@ def to_component_input(
         factor=component.factor,
         waste_percent=component.waste_percent,
         option=option_name,
-        width_reduction_mm=width_reduction_mm,
-        height_reduction_mm=height_reduction_mm,
+        stock_length=item.stock_length if isinstance(item, Material) else None,
+        stock_length_unit=item.stock_length_unit if isinstance(item, Material) else None,
+        width_reduction_in=mm_to_inches(width_reduction_mm),
+        height_reduction_in=mm_to_inches(height_reduction_mm),
     )
 
 

@@ -1,12 +1,17 @@
-"""Price list and product templates, managed by admins.
+"""Price list and product templates, managed by admins (pricing v2, see docs/quotations.md).
 
-A product's price comes from its components (the template). Each component is one material or
-one labour rate, multiplied by a measurement of the opening:
+Materials and labour are priced in the units the shop buys them in: per piece, per kilo, per foot,
+per sq ft, or per **bar** of a stock length (e.g. a 21-ft profile or a 6-m square bar; always
+counted as whole bars). A product's template lines measure the opening in feet / sq ft:
 
     quantity = basis_value(width, height) * factor * (1 + waste_percent / 100)
-    cost     = quantity * unit_price
+    cost     = quantity * unit_price          (bars: whole bars, rounded up)
 
-Basis values: area (m²), perimeter / width / height (m), fixed (1 per product unit).
+Basis values: area (sq ft), perimeter / width / height (ft), fixed (1 per product unit).
+
+A product is sold either **per sq ft** (owner-set rate: the product's base rate plus the chosen
+options' rates, e.g. a glass type and an open back extra; the template is then only a cost guide)
+or **computed** from its template (line costs + markup, e.g. grills).
 
 Lines without an option are always included. Lines that belong to a ProductOption are only
 priced when that option is chosen. An option is either:
@@ -38,9 +43,21 @@ from app.db.base import Base, Timestamps, UUIDPk, str_enum
 
 
 class PriceUnit(StrEnum):
-    SQM = "sqm"  # per square metre
-    LM = "lm"  # per linear metre
     PIECE = "piece"  # per piece / per job
+    KG = "kg"  # per kilo (e.g. jamb rubber, vinyl)
+    FT = "ft"  # per foot
+    SQFT = "sqft"  # per square foot (e.g. glass)
+    BAR = "bar"  # per bar of `stock_length` (e.g. 21-ft profile, 6-m square bar); whole bars
+
+
+class StockUnit(StrEnum):
+    FT = "ft"
+    M = "m"
+
+
+class PricingMethod(StrEnum):
+    PER_SQFT = "per_sqft"  # sold per sq ft at owner-set rates (template = cost guide)
+    COMPUTED = "computed"  # template line costs + markup (e.g. grills)
 
 
 class MaterialCategory(StrEnum):
@@ -66,14 +83,17 @@ class Basis(StrEnum):
     FIXED = "fixed"
 
 
-# Which measurement fits which price unit (m² with area, metres with lengths, pieces with fixed).
-BASIS_UNIT = {
-    Basis.AREA: PriceUnit.SQM,
-    Basis.PERIMETER: PriceUnit.LM,
-    Basis.WIDTH: PriceUnit.LM,
-    Basis.HEIGHT: PriceUnit.LM,
-    Basis.FIXED: PriceUnit.PIECE,
+LENGTHS = (Basis.PERIMETER, Basis.WIDTH, Basis.HEIGHT)
+# Which measurements make sense for each unit. Bars: a length (feet needed ÷ stock length), an
+# area (factor = bars per sq ft, e.g. grills) or a fixed number of bars.
+BASES_FOR_UNIT: dict[PriceUnit, tuple[Basis, ...]] = {
+    PriceUnit.PIECE: (Basis.FIXED,),
+    PriceUnit.KG: (*LENGTHS, Basis.AREA, Basis.FIXED),
+    PriceUnit.FT: LENGTHS,
+    PriceUnit.SQFT: (Basis.AREA,),
+    PriceUnit.BAR: (*LENGTHS, Basis.AREA, Basis.FIXED),
 }
+LABOR_UNITS = (PriceUnit.PIECE, PriceUnit.FT, PriceUnit.SQFT)
 
 Money = Numeric(12, 2)
 Percent = Numeric(5, 2)
@@ -81,13 +101,24 @@ Percent = Numeric(5, 2)
 
 class Material(UUIDPk, Timestamps, Base):
     __tablename__ = "materials"
-    __table_args__ = (CheckConstraint("unit_price >= 0", name="unit_price_nonnegative"),)
+    __table_args__ = (
+        CheckConstraint("unit_price >= 0", name="unit_price_nonnegative"),
+        CheckConstraint("stock_length_unit IN ('ft', 'm')", name="stock_length_unit"),
+        CheckConstraint(
+            "(unit = 'bar') = (stock_length IS NOT NULL AND stock_length > 0"
+            " AND stock_length_unit IS NOT NULL)",
+            name="bar_stock_length",
+        ),
+    )
 
     code: Mapped[str] = mapped_column(String(30), unique=True)
     name: Mapped[str] = mapped_column(String(120))
     category: Mapped[MaterialCategory] = mapped_column(str_enum(MaterialCategory, "category"))
     unit: Mapped[PriceUnit] = mapped_column(str_enum(PriceUnit, "unit"))
-    unit_price: Mapped[Decimal] = mapped_column(Money)
+    unit_price: Mapped[Decimal] = mapped_column(Money)  # per unit; for bars, per whole bar
+    # Bars only: the length one bar is sold in, e.g. 21 ft or 6 m.
+    stock_length: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    stock_length_unit: Mapped[str | None] = mapped_column(String(2))
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=true(), default=True)
 
 
@@ -109,6 +140,7 @@ class Product(UUIDPk, Timestamps, Base):
         CheckConstraint(
             "min_height_mm > 0 AND min_height_mm <= max_height_mm", name="height_range"
         ),
+        CheckConstraint("rate_per_sqft >= 0", name="rate_per_sqft_nonnegative"),
     )
 
     code: Mapped[str] = mapped_column(String(30), unique=True)
@@ -120,6 +152,13 @@ class Product(UUIDPk, Timestamps, Base):
     min_height_mm: Mapped[int] = mapped_column(Integer)
     max_height_mm: Mapped[int] = mapped_column(Integer)
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=true(), default=True)
+    pricing_method: Mapped[PricingMethod] = mapped_column(
+        str_enum(PricingMethod, "pricing_method"),
+        server_default=PricingMethod.COMPUTED.value,
+        default=PricingMethod.COMPUTED,
+    )
+    # Per-sq-ft products: base selling rate (VAT included), plus the chosen options' rates.
+    rate_per_sqft: Mapped[Decimal] = mapped_column(Money, server_default="0", default=Decimal(0))
 
 
 class ProductOptionGroup(UUIDPk, Timestamps, Base):
@@ -145,6 +184,7 @@ class ProductOption(UUIDPk, Timestamps, Base):
             "width_reduction_mm BETWEEN 0 AND 2000 AND height_reduction_mm BETWEEN 0 AND 2000",
             name="reduction_range",
         ),
+        CheckConstraint("rate_per_sqft >= 0", name="rate_per_sqft_nonnegative"),
     )
 
     product_id: Mapped[uuid.UUID] = mapped_column(
@@ -160,6 +200,8 @@ class ProductOption(UUIDPk, Timestamps, Base):
     # When chosen, every other line is measured this much narrower / shorter (see module doc).
     width_reduction_mm: Mapped[int] = mapped_column(Integer, server_default="0", default=0)
     height_reduction_mm: Mapped[int] = mapped_column(Integer, server_default="0", default=0)
+    # Per-sq-ft products: added to the selling rate when chosen (glass type rate, open back extra).
+    rate_per_sqft: Mapped[Decimal] = mapped_column(Money, server_default="0", default=Decimal(0))
 
 
 class ProductComponent(UUIDPk, Timestamps, Base):

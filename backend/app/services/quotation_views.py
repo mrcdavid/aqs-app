@@ -37,6 +37,9 @@ def summary(q: Quotation) -> QuotationSummaryOut:
         items=[
             ItemSummaryOut(
                 product_name=i.product_name,
+                input_width=i.input_width,
+                input_height=i.input_height,
+                input_unit=i.input_unit,
                 width_mm=i.width_mm,
                 height_mm=i.height_mm,
                 quantity=i.quantity,
@@ -80,6 +83,7 @@ def _item_view(item: QuotationItem) -> QuotationItemOut:
         input_unit=item.input_unit,
         width_mm=item.width_mm,
         height_mm=item.height_mm,
+        area_sqft=snap["pricing"].get("area_sqft"),
         quantity=item.quantity,
         amount=item.amount,
     )

@@ -11,17 +11,17 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { useRevalidator } from 'react-router'
 
-import type { MaterialCategory, PriceUnit } from '../../api/admin'
+import type { MaterialCategory, PriceUnit, StockUnit } from '../../api/admin'
 import { StatusBadge } from '../../components/ui/Badge'
 import { Button, IconButton } from '../../components/ui/Button'
 import { Card, EmptyState, ErrorBanner, PageHeader } from '../../components/ui/Card'
 import { Field, inputClass, segmentClass } from '../../components/ui/Field'
 import { Modal } from '../../components/ui/Modal'
 import { messageOf } from '../../lib/errors'
-import { formatMoney, MATERIAL_CATEGORY_LABEL, UNIT_LABEL } from '../../lib/format'
+import { barLabel, formatMoney, MATERIAL_CATEGORY_LABEL, trimDecimal, UNIT_LABEL } from '../../lib/format'
 import { confirmAction, toast } from '../../stores/feedback'
 import { priceItemSchema, type PriceItemForm } from './schemas'
 import { useCurrency } from './useCurrency'
@@ -34,6 +34,9 @@ export interface CatalogItem {
   unit: PriceUnit
   price: string
   category?: MaterialCategory
+  /** Bars only */
+  stock_length?: string | null
+  stock_length_unit?: StockUnit | null
   is_active: boolean
 }
 
@@ -44,6 +47,8 @@ interface Props {
   singular: string // "material" / "labour rate"
   codeHint: string
   withCategory: boolean
+  /** Units this kind of item can be priced in (labour: never per kilo or per bar) */
+  units: PriceUnit[]
   items: CatalogItem[]
   create: (values: PriceItemForm) => Promise<unknown>
   update: (id: string, values: Partial<PriceItemForm> & { is_active?: boolean }) => Promise<unknown>
@@ -121,7 +126,10 @@ export function CatalogItemsPage(props: Props) {
 
   const price = (i: CatalogItem) => (
     <span className="tabular-nums whitespace-nowrap">
-      {formatMoney(i.price, currency)} <span className="text-muted">{UNIT_LABEL[i.unit]}</span>
+      {formatMoney(i.price, currency)}{' '}
+      <span className="text-muted">
+        {i.unit === 'bar' ? `per ${barLabel(i.stock_length, i.stock_length_unit)}` : UNIT_LABEL[i.unit]}
+      </span>
     </span>
   )
 
@@ -258,6 +266,7 @@ function ItemModal({
   singular,
   codeHint,
   withCategory,
+  units,
   create,
   update,
 }: Props & { editing: CatalogItem | 'new' | null; currency: string; onClose: () => void; onSaved: () => void }) {
@@ -292,6 +301,7 @@ function ItemModal({
           currency={currency}
           codeHint={codeHint}
           withCategory={withCategory}
+          units={units}
           onSubmit={async (values) => {
             setSaving(true)
             try {
@@ -310,10 +320,19 @@ function ItemModal({
   )
 }
 
+const UNIT_HINT: Record<PriceUnit, string> = {
+  piece: 'Counted per window, e.g. handles, rollers',
+  kg: 'e.g. jamb rubber, vinyl: kilos per foot, per sq ft or per window',
+  ft: 'Measured by length',
+  sqft: 'Measured by area, e.g. glass',
+  bar: 'Whole bars of a fixed length, e.g. 21-ft profiles, 6-m square bars',
+}
+
 function ItemForm({
   item,
   currency,
   withCategory,
+  units,
   codeHint,
   onSubmit,
 }: {
@@ -321,16 +340,24 @@ function ItemForm({
   currency: string
   codeHint: string
   withCategory: boolean
+  units: PriceUnit[]
   onSubmit: (values: PriceItemForm) => Promise<void>
 }) {
   const [error, setError] = useState<string | null>(null)
-  const { register, handleSubmit, formState } = useForm<PriceItemForm>({
+  const { register, handleSubmit, formState, control } = useForm<PriceItemForm>({
     resolver: zodResolver(priceItemSchema),
-    defaultValues: item
-      ? { code: item.code, name: item.name, category: item.category ?? 'glass', unit: item.unit, price: item.price }
-      : { code: '', name: '', category: 'glass', unit: 'sqm', price: '' },
+    defaultValues: {
+      code: item?.code ?? '',
+      name: item?.name ?? '',
+      category: item?.category ?? 'glass',
+      unit: item?.unit ?? units[0],
+      price: item?.price ?? '',
+      stock_length: item?.stock_length ? trimDecimal(item.stock_length) : '',
+      stock_length_unit: item?.stock_length_unit ?? 'ft',
+    },
   })
   const { errors, isSubmitting } = formState
+  const unit = useWatch({ control, name: 'unit' })
 
   return (
     <form
@@ -365,18 +392,49 @@ function ItemForm({
             </select>
           </Field>
         )}
-        <Field label="Priced" htmlFor="ci-unit" required hint="Decides how templates measure it">
+        <Field label="Priced" htmlFor="ci-unit" required hint={UNIT_HINT[unit]}>
           <select id="ci-unit" className={inputClass} {...register('unit')}>
-            {Object.entries(UNIT_LABEL).map(([value, label]) => (
+            {units.map((value) => (
               <option key={value} value={value}>
-                {label}
+                {UNIT_LABEL[value]}
               </option>
             ))}
           </select>
         </Field>
-        <Field label={`Price (${currency})`} htmlFor="ci-price" required error={errors.price?.message} className={withCategory ? '' : 'sm:col-span-2'}>
+        <Field
+          label={unit === 'bar' ? `Price of one bar (${currency})` : `Price (${currency})`}
+          htmlFor="ci-price"
+          required
+          error={errors.price?.message}
+          className={withCategory ? '' : 'sm:col-span-2'}
+        >
           <input id="ci-price" inputMode="decimal" placeholder="e.g. 850.00" className={`${inputClass} tabular-nums`} aria-invalid={!!errors.price} {...register('price')} />
         </Field>
+        {unit === 'bar' && (
+          <Field
+            label="Bar length"
+            htmlFor="ci-length"
+            required
+            error={errors.stock_length?.message}
+            hint="The length one bar is sold in; templates count whole bars, rounded up"
+            className="sm:col-span-2"
+          >
+            <div className="flex gap-2">
+              <input
+                id="ci-length"
+                inputMode="decimal"
+                placeholder="e.g. 21"
+                className={`${inputClass} tabular-nums`}
+                aria-invalid={!!errors.stock_length}
+                {...register('stock_length')}
+              />
+              <select aria-label="Bar length unit" className={`${inputClass} w-28`} {...register('stock_length_unit')}>
+                <option value="ft">feet</option>
+                <option value="m">metres</option>
+              </select>
+            </div>
+          </Field>
+        )}
       </fieldset>
     </form>
   )

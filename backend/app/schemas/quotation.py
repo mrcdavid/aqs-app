@@ -112,6 +112,9 @@ class RejectIn(BaseModel):
 
 class ItemSummaryOut(BaseModel):
     product_name: str
+    input_width: Decimal
+    input_height: Decimal
+    input_unit: str
     width_mm: int
     height_mm: int
     quantity: int
@@ -154,6 +157,7 @@ class QuotationItemOut(BaseModel):
     input_unit: str
     width_mm: int
     height_mm: int
+    area_sqft: Decimal | None  # per piece; None for quotations priced before v2
     quantity: int
     amount: Decimal  # for the whole quantity, VAT included, rounded up
 

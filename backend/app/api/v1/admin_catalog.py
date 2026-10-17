@@ -15,6 +15,8 @@ from app.core.deps import DB, StaffUser
 from app.models import (
     LaborRate,
     Material,
+    PriceUnit,
+    PricingMethod,
     Product,
     ProductComponent,
     ProductOption,
@@ -44,6 +46,9 @@ from app.schemas.catalog import (
     ProductIn,
     ProductOut,
     ProductUpdate,
+    RaiseRatesIn,
+    RaiseRatesOut,
+    check_stock_length,
 )
 from app.services import audit
 from app.services.catalog import (
@@ -56,12 +61,22 @@ from app.services.catalog import (
     load_components,
     load_options,
 )
-from app.services.options import load_groups, pick, priced_lines
-from app.services.pricing import compute_price, to_mm
+from app.services.options import load_groups, pick
+from app.services.pricing import money, to_inches, to_mm
+from app.services.quotations import breakdown_for
 
 router = APIRouter(prefix="/admin", tags=["admin: catalogue"])
 
-MATERIAL_FIELDS = ["code", "name", "category", "unit", "unit_price", "is_active"]
+MATERIAL_FIELDS = [
+    "code",
+    "name",
+    "category",
+    "unit",
+    "unit_price",
+    "stock_length",
+    "stock_length_unit",
+    "is_active",
+]
 LABOR_FIELDS = ["code", "name", "unit", "rate", "is_active"]
 PRODUCT_FIELDS = [
     "code",
@@ -72,6 +87,8 @@ PRODUCT_FIELDS = [
     "max_width_mm",
     "min_height_mm",
     "max_height_mm",
+    "pricing_method",
+    "rate_per_sqft",
     "is_active",
 ]
 COMPONENT_FIELDS = [
@@ -91,6 +108,7 @@ OPTION_FIELDS = [
     "sort_order",
     "width_reduction_mm",
     "height_reduction_mm",
+    "rate_per_sqft",
 ]
 GROUP_FIELDS = ["name", "sort_order"]
 SETTINGS_FIELDS = [
@@ -186,6 +204,16 @@ async def update_material(
                 "This material is used in product templates; remove it there before changing "
                 "its unit, or create a new material",
             )
+    # Bars keep their length unless a new one is sent; other units never have one.
+    unit = values.get("unit", material.unit)
+    keep = unit == PriceUnit.BAR
+    length = values.get("stock_length", material.stock_length if keep else None)
+    length_unit = values.get("stock_length_unit", material.stock_length_unit if keep else None)
+    try:
+        check_stock_length(unit, length, length_unit)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc).capitalize()) from exc
+    values |= {"stock_length": length, "stock_length_unit": length_unit}
     before = audit.snapshot(material, MATERIAL_FIELDS)
     for field, value in values.items():
         setattr(material, field, value)
@@ -324,6 +352,10 @@ async def _product_detail(db: DB, product: Product) -> ProductDetailOut:
                 item_name=item.name,
                 item_unit=item.unit,
                 item_price=item.unit_price if isinstance(item, Material) else item.rate,
+                item_stock_length=item.stock_length if isinstance(item, Material) else None,
+                item_stock_length_unit=(
+                    item.stock_length_unit if isinstance(item, Material) else None
+                ),
                 item_active=item.is_active,
                 basis=component.basis,
                 factor=component.factor,
@@ -528,7 +560,8 @@ async def price_preview(
     width_mm, height_mm = to_mm(body.width, body.unit), to_mm(body.height, body.unit)
     check_dimensions(product, width_mm, height_mm)
     components = await load_components(db, product.id)
-    if not any(c.option_id is None for c, _ in components):
+    computed = product.pricing_method == PricingMethod.COMPUTED
+    if computed and not any(c.option_id is None for c, _ in components):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Add at least one always-included line to this product",
@@ -539,21 +572,17 @@ async def price_preview(
     chosen = {o.id for o in picked.options}
     used = [(c, item) for c, item in components if c.option_id is None or c.option_id in chosen]
 
-    settings = await get_pricing_settings(db)
-    try:
-        breakdown = compute_price(
-            priced_lines(components, picked),
-            width_mm=width_mm,
-            height_mm=height_mm,
-            quantity=body.quantity,
-            markup_percent=settings.markup_percent,
-            vat_percent=settings.vat_percent,
-            currency=settings.currency,
-            rounding_step=settings.rounding_step,
-        )
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    breakdown = breakdown_for(
+        product,
+        await get_pricing_settings(db),
+        components,
+        picked,
+        width_in=to_inches(body.width, body.unit),
+        height_in=to_inches(body.height, body.unit),
+        quantity=body.quantity,
+    )
     warnings = [f"{item.code} is archived" for _, item in used if not item.is_active]
+    warnings += breakdown.warnings
     if not product.is_active:
         warnings.insert(0, "This product is archived; customers can't select it")
     return PricePreviewOut(**breakdown.as_dict(), warnings=warnings)
@@ -779,6 +808,67 @@ async def remove_option_group(
 
 
 # ---------- pricing settings ----------
+
+
+@router.post("/pricing/raise-rates")
+async def raise_rates(
+    body: RaiseRatesIn, user: StaffUser, db: DB, request: Request
+) -> RaiseRatesOut:
+    """Raise (or lower) every rate per sq ft by a percentage, e.g. when materials get dearer.
+
+    Covers products' own rates and their options' extras (glass types, open back). Quotations
+    already made keep their prices; computed products follow their material prices instead.
+    """
+    factor = 1 + body.percent / 100
+    products = list(
+        await db.scalars(
+            select(Product)
+            .where(Product.rate_per_sqft > 0)
+            .order_by(Product.code)
+            .with_for_update()
+        )
+    )
+    options = (
+        await db.execute(
+            select(ProductOption, Product.code)
+            .join(Product, Product.id == ProductOption.product_id)
+            .where(ProductOption.rate_per_sqft > 0)
+            .order_by(Product.code, ProductOption.name)
+            .with_for_update(of=ProductOption)
+        )
+    ).all()
+    product_changes, option_changes = [], []
+    for product in products:
+        before = product.rate_per_sqft
+        product.rate_per_sqft = money(before * factor)
+        product_changes.append(
+            {"product": product.code, "rate": [str(before), str(product.rate_per_sqft)]}
+        )
+    for option, code in options:
+        before = option.rate_per_sqft
+        option.rate_per_sqft = money(before * factor)
+        option_changes.append(
+            {
+                "product": code,
+                "option": option.name,
+                "rate": [str(before), str(option.rate_per_sqft)],
+            }
+        )
+    audit.record(
+        db,
+        "pricing.rates_raised",
+        request=request,
+        actor_id=user.id,
+        entity="pricing_settings",
+        entity_id="1",
+        details={
+            "percent": str(body.percent),
+            "products": product_changes,
+            "options": option_changes,
+        },
+    )
+    await db.commit()
+    return RaiseRatesOut(products=len(products), options=len(options))
 
 
 @router.get("/pricing-settings")

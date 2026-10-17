@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AuditLog
-from tests.test_admin_catalog import WINDOW, add_open_back, create, material
+from tests.test_admin_catalog import WINDOW, add_open_back, create, make_per_sqft, material
 from tests.test_quotations import (  # noqa: F401 - fixtures
     API,
     REQUEST,
@@ -26,12 +26,12 @@ ADMIN = f"{API}/admin"
 
 
 async def add_glass_group(admin: AsyncClient, pid: str) -> dict[str, str]:
-    """Glass type: Ordinary (500/m²) or Reflective (900/m²), both measured by area."""
+    """Glass type: Ordinary (40/sq ft) or Reflective (80/sq ft), both measured by area."""
     detail = await create(admin, f"products/{pid}/option-groups", {"name": "Glass type"})
     group_id = detail["option_groups"][0]["id"]
     ids: dict[str, str] = {}
-    for name, code, price in (("Ordinary", "GL-ORD", "500"), ("Reflective", "GL-REF", "900")):
-        glass = await create(admin, "materials", material(code, "sqm", price))
+    for name, code, price in (("Ordinary", "GL-ORD", "40"), ("Reflective", "GL-REF", "80")):
+        glass = await create(admin, "materials", material(code, "sqft", price))
         body = {"group_id": group_id, "name": name, "sort_order": len(ids)}
         detail = await create(admin, f"products/{pid}/options", body)
         option_id = next(o["id"] for o in detail["options"] if o["name"] == name)
@@ -83,15 +83,16 @@ async def test_each_choice_has_its_own_price(
 ):
     ordinary = await request_quote(customer, product_id, option_ids=[glass["Ordinary"]])
     reflective = await request_quote(customer, product_id, option_ids=[glass["Reflective"]])
-    # 1.2 m² of glass per window, x2 windows, +20% markup, +12% VAT, rounded up to the next 100.
-    assert (ordinary["total"], reflective["total"]) == ("13600.00", "14900.00")
+    # 16 sq ft of glass per window, +20% markup, x2 windows, rounded up to the next 100:
+    # (5,612 + 640) x 1.2 x 2 = 15,004.80 and (5,612 + 1,280) x 1.2 x 2 = 16,540.80.
+    assert (ordinary["total"], reflective["total"]) == ("15100.00", "16600.00")
     item = reflective["items"][0]
     assert item["choices"] == [{"group": "Glass type", "name": "Reflective"}]
-    assert item["options"] == [] and len(item["includes"]) == 5
+    assert item["options"] == [] and len(item["includes"]) == 6
 
     monkeypatch.setattr(reportlab.rl_config, "pageCompression", 0)
     pdf = (await customer.get(f"{API}/quotations/{reflective['id']}/pdf")).content
-    assert b"Glass type: Reflective" in pdf and b"14,900.00" in pdf
+    assert b"Glass type: Reflective" in pdf and b"16,600.00" in pdf
 
 
 async def test_archived_glass_hides_the_choice_then_the_product(
@@ -131,7 +132,7 @@ async def test_a_choice_may_have_no_lines(
     none_id = detail["options"][0]["id"]
     q = await request_quote(customer, product_id, option_ids=[none_id])
     assert q["items"][0]["choices"] == [{"group": "Grill", "name": "None"}]
-    assert q["total"] == "12000.00"  # same as the plain window
+    assert q["total"] == "13500.00"  # same as the plain window
 
 
 # ---------- open back: the size typed is the wall opening ----------
@@ -147,14 +148,19 @@ async def test_open_back_makes_the_window_smaller(
     q = await request_quote(customer, product_id, option_ids=[glass["Ordinary"], open_back["id"]])
     detail = (await admin.get(f"{ADMIN}/quotations/{q['id']}")).json()
     lines = detail["items"][0]["breakdown"]["lines"]
-    sizes = {(line["option"], line["width_mm"], line["height_mm"]) for line in lines}
+    sizes = {(line["option"], line["width_in"], line["height_in"]) for line in lines}
     # The window and its glass sit inside the open back; the open back uses the full opening.
-    assert sizes == {("", 1100, 900), ("Ordinary", 1100, 900), ("Open back aluminum", 1200, 1000)}
+    # 100 mm = 3.94 in: 48 in typed -> 44.06 in.
+    assert sizes == {
+        ("", "44.06", "44.06"),
+        ("Ordinary", "44.06", "44.06"),
+        ("Open back aluminum", "48.00", "48.00"),
+    }
 
     plain = await request_quote(customer, product_id, option_ids=[glass["Ordinary"]])
     detail = (await admin.get(f"{ADMIN}/quotations/{plain['id']}")).json()
     lines = detail["items"][0]["breakdown"]["lines"]
-    assert {(line["width_mm"], line["height_mm"]) for line in lines} == {(1200, 1000)}
+    assert {(line["width_in"], line["height_in"]) for line in lines} == {("48.00", "48.00")}
 
 
 async def test_opening_too_small_for_the_open_back(
@@ -166,8 +172,8 @@ async def test_opening_too_small_for_the_open_back(
     open_back = await add_open_back(admin, product_id, reduction_mm=400)
     body = quote_body(
         product_id,
-        width="30",
-        height="30",
+        width="12",  # 12 in (305 mm) is less than the 400 mm the open back takes off
+        height="12",
         quantity=1,
         option_ids=[glass["Ordinary"], open_back["id"]],
     )
@@ -179,6 +185,62 @@ async def test_reduction_bounds(admin: AsyncClient, product_id: str):
     body = {"name": "Open back", "width_reduction_mm": 2001}
     r = await admin.post(f"{ADMIN}/products/{product_id}/options", json=body)
     assert r.status_code == 422
+
+
+# ---------- sold per sq ft (pricing v2) ----------
+
+
+async def test_per_sqft_window_end_to_end(
+    customer: AsyncClient,
+    admin: AsyncClient,
+    product_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    ids = await make_per_sqft(admin, product_id)
+    product = (await customer.get(f"{API}/catalog/products")).json()[0]
+    groups = [(g["name"], [c["name"] for c in g["choices"]]) for g in product["choice_groups"]]
+    assert groups == [
+        ("Glass type", ["1/4 Bronze", "Reflective"]),
+        ("Glass sheet", ["4 x 7 ft", "4 x 8 ft"]),
+    ]
+    # Open back has no lines, but a rate: it is offered. Customers never see rates.
+    assert product["options"] == [{"id": ids["Open back"], "name": "Open back", "description": ""}]
+
+    chosen = [ids["1/4 Bronze"], ids["4 x 7 ft"], ids["Open back"]]
+    monkeypatch.setattr(reportlab.rl_config, "pageCompression", 0)
+    q = await request_quote(customer, product_id, quantity=1, option_ids=chosen)
+    assert q["total"] == "6300.00"  # 16 sq ft x (350 + 40) = 6,240 -> 6,300; no markup added
+    item = q["items"][0]
+    assert item["choices"] == [
+        {"group": "Glass type", "name": "1/4 Bronze"},
+        {"group": "Glass sheet", "name": "4 x 7 ft"},
+    ]
+    assert (item["options"], item["area_sqft"]) == (["Open back"], "16.00")
+    pdf = (await customer.get(f"{API}/quotations/{q['id']}/pdf")).content
+    for text in (b"Glass sheet: 4 x 7 ft", b"With: Open back", b"16 sq ft", b"6,300.00"):
+        assert text in pdf
+    assert b"PHP 390.00" not in pdf and b"PHP 350.00" not in pdf  # never the rates
+
+    breakdown = (await admin.get(f"{ADMIN}/quotations/{q['id']}")).json()["items"][0]["breakdown"]
+    assert breakdown["pricing_method"] == "per_sqft" and breakdown["rate_per_sqft"] == "390.00"
+    assert (breakdown["unit_subtotal"], breakdown["margin"]) == ("5612.00", "688.00")
+
+    reflective = [ids["Reflective"], ids["4 x 8 ft"]]
+    q = await request_quote(customer, product_id, quantity=2, option_ids=reflective)
+    assert q["total"] == "12200.00"  # 16 x 380 = 6,080 x 2 = 12,160 -> 12,200
+
+
+async def test_per_sqft_without_any_rate_is_not_offered(
+    customer: AsyncClient,
+    admin: AsyncClient,
+    product_id: str,
+):
+    await admin.patch(f"{ADMIN}/products/{product_id}", json={"pricing_method": "per_sqft"})
+    assert (await customer.get(f"{API}/catalog/products")).json() == []
+    r = await customer.post(f"{API}/quotations", json=quote_body(product_id))
+    assert (
+        r.status_code == 422 and r.json()["detail"] == "This product has no price for these options"
+    )
 
 
 # ---------- managing groups ----------

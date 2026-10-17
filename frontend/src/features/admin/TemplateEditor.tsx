@@ -20,7 +20,7 @@ import { Card, EmptyState, ErrorBanner } from '../../components/ui/Card'
 import { Field, inputClass } from '../../components/ui/Field'
 import { Modal } from '../../components/ui/Modal'
 import { messageOf } from '../../lib/errors'
-import { BASES_FOR_UNIT, BASIS_LABEL, formatMoney, trimDecimal, UNIT_LABEL } from '../../lib/format'
+import { barLabel, BASES_FOR_UNIT, BASIS_LABEL, formatMoney, trimDecimal, UNIT_LABEL } from '../../lib/format'
 import { confirmAction, toast } from '../../stores/feedback'
 import {
   componentSchema,
@@ -46,6 +46,11 @@ type OptionEditing = { option: ProductOption | null; groupId: string | null } | 
 /** null = closed; 'new' = adding a group; otherwise renaming that group. */
 type GroupEditing = ProductOptionGroup | 'new' | null
 
+/** "per sq ft", or "per 21 ft bar" for bars. */
+function unitLabel(unit: PriceUnit, length?: string | null, lengthUnit?: string | null): string {
+  return unit === 'bar' ? `per ${barLabel(length, lengthUnit)}` : UNIT_LABEL[unit]
+}
+
 export function TemplateEditor({ product, materials, laborRates, onChanged }: Props) {
   const currency = useCurrency()
   const [editing, setEditing] = useState<LineEditing>(null)
@@ -59,6 +64,11 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
   const addOns = product.options.filter((o) => o.group_id === null)
   const choicesOf = (g: ProductOptionGroup) => product.options.filter((o) => o.group_id === g.id)
   const hasOptions = product.options.length > 0 || product.option_groups.length > 0
+  const perSqft = product.pricing_method === 'per_sqft'
+  const rateBadge = (o: ProductOption) =>
+    perSqft && Number(o.rate_per_sqft) > 0 ? (
+      <Badge tone="success">+{formatMoney(o.rate_per_sqft, currency)} / sq ft</Badge>
+    ) : null
 
   async function remove(c: Component) {
     const ok = await confirmAction({
@@ -158,7 +168,8 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
             </p>
             <div className="mt-1 flex items-center justify-between">
               <span className="text-sm tabular-nums">
-                {formatMoney(c.item_price, currency)} <span className="text-muted">{UNIT_LABEL[c.item_unit]}</span>
+                {formatMoney(c.item_price, currency)}{' '}
+                <span className="text-muted">{unitLabel(c.item_unit, c.item_stock_length, c.item_stock_length_unit)}</span>
               </span>
               {lineActions(c)}
             </div>
@@ -190,7 +201,8 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
                 <td className="py-2.5 pr-4 text-right tabular-nums">{trimDecimal(c.factor)}</td>
                 <td className="py-2.5 pr-4 text-right tabular-nums">{trimDecimal(c.waste_percent)}%</td>
                 <td className="py-2.5 pr-4 text-right tabular-nums whitespace-nowrap">
-                  {formatMoney(c.item_price, currency)} <span className="text-muted">{UNIT_LABEL[c.item_unit]}</span>
+                  {formatMoney(c.item_price, currency)}{' '}
+                  <span className="text-muted">{unitLabel(c.item_unit, c.item_stock_length, c.item_stock_length_unit)}</span>
                 </td>
                 <td className="py-1.5">{lineActions(c)}</td>
               </tr>
@@ -203,7 +215,7 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
 
   return (
     <Card
-      title="Price template"
+      title={perSqft ? 'Rates and cost guide' : 'Price template'}
       icon={Layers}
       actions={
         hasItems && (
@@ -221,10 +233,19 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
         )
       }
     >
+      {perSqft && (
+        <p className="mb-4 rounded-xl border border-brand/30 bg-brand-soft p-3 text-sm text-ink">
+          <strong>Sold per sq ft.</strong> The price is <strong>area × (base rate {formatMoney(product.rate_per_sqft, currency)}
+          {' '}+ the rates of the chosen glass type and add-ons)</strong>, VAT included. The lines below are only a{' '}
+          <strong>cost guide</strong>: the preview shows what one piece costs you and your margin. A choice group with
+          no rates (e.g. Glass sheet: 4 × 7 ft) is just recorded on the quotation.
+        </p>
+      )}
       <p className="mb-4 rounded-xl bg-surface-2 p-3 text-sm text-muted">
-        Each line costs <strong className="text-ink">measurement × factor × (1 + waste %) × price</strong>. Example: two tracks
-        along the width → <em>Width</em>, factor <em>2</em>. <strong className="text-ink">Choice groups</strong> ask one
-        question with one answer (e.g. Glass type: Ordinary or Reflective); only the chosen answer's lines are priced.{' '}
+        Each line costs <strong className="text-ink">measurement × factor × (1 + waste %) × price</strong>, measured in feet
+        and sq ft. Bars are counted whole, rounded up: e.g. 32 ft of frame in 21-ft bars → 2 bars. Example: two tracks along
+        the width → <em>Width</em>, factor <em>2</em>. <strong className="text-ink">Choice groups</strong> ask one question
+        with one answer (e.g. Glass type: 1/4 Bronze or Reflective); only the chosen answer is priced.{' '}
         <strong className="text-ink">Add-ons</strong> are optional extras (e.g. an open back frame), priced only when ticked.
       </p>
 
@@ -297,6 +318,7 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
                       <Section
                         key={o.id}
                         title={o.name}
+                        badge={rateBadge(o)}
                         text={o.description || undefined}
                         actions={
                           <>
@@ -309,7 +331,11 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
                         }
                       >
                         {lines.length === 0 ? (
-                          <p className="text-sm text-muted">No lines: choosing this adds nothing (fine for a “None” choice).</p>
+                          <p className="text-sm text-muted">
+                            {perSqft
+                              ? 'No cost lines. Its rate (if any) is added to the price per sq ft.'
+                              : 'No lines: choosing this adds nothing (fine for a “None” choice).'}
+                          </p>
                         ) : (
                           lineList(lines)
                         )}
@@ -330,9 +356,12 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
               key={o.id}
               title={o.name}
               badge={
-                <Badge tone="brand" icon={PackagePlus}>
-                  Optional add-on
-                </Badge>
+                <>
+                  <Badge tone="brand" icon={PackagePlus}>
+                    Optional add-on
+                  </Badge>
+                  {rateBadge(o)}
+                </>
               }
               text={
                 [
@@ -355,7 +384,11 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
             >
               {lines.length === 0 ? (
                 <p className="rounded-xl border border-dashed border-line p-4 text-sm text-muted">
-                  No lines yet. Customers won't see this add-on until it has at least one line.
+                  {perSqft
+                    ? Number(o.rate_per_sqft) > 0
+                      ? 'No cost lines. Its rate is added to the price per sq ft when ticked.'
+                      : "No rate or lines yet. Customers won't see this add-on until it has a rate per sq ft or a line."
+                    : "No lines yet. Customers won't see this add-on until it has at least one line."}
                 </p>
               ) : (
                 lineList(lines)
@@ -470,6 +503,7 @@ function OptionModal({
         <OptionFormBody
           option={option}
           isChoice={!!group}
+          perSqft={product.pricing_method === 'per_sqft'}
           onSubmit={async (values) => {
             const body = optionSchema.parse(values)
             if (option) {
@@ -491,13 +525,16 @@ function OptionModal({
 function OptionFormBody({
   option,
   isChoice,
+  perSqft,
   onSubmit,
 }: {
   option: ProductOption | null
   isChoice: boolean
+  perSqft: boolean
   onSubmit: (values: OptionForm) => Promise<void>
 }) {
   const [error, setError] = useState<string | null>(null)
+  const currency = useCurrency()
   const { register, handleSubmit, formState } = useForm<OptionForm>({
     resolver: zodResolver(optionSchema),
     defaultValues: {
@@ -505,6 +542,7 @@ function OptionFormBody({
       description: option?.description ?? '',
       width_reduction_mm: option?.width_reduction_mm ?? 0,
       height_reduction_mm: option?.height_reduction_mm ?? 0,
+      rate_per_sqft: option ? trimDecimal(option.rate_per_sqft) : '0',
     },
   })
   const { errors, isSubmitting } = formState
@@ -538,6 +576,22 @@ function OptionFormBody({
         <Field label="Description (optional)" htmlFor="o-desc" hint="A short explanation for customers" error={errors.description?.message} className="sm:col-span-2">
           <input id="o-desc" className={inputClass} {...register('description')} />
         </Field>
+        {perSqft && (
+          <Field
+            label={`Rate per sq ft (${currency})`}
+            htmlFor="o-rate"
+            required
+            hint={
+              isChoice
+                ? 'Added to the base rate when chosen, e.g. 1/4 Bronze 350. 0 = just recorded (e.g. a sheet size).'
+                : 'Added to the rate when ticked, e.g. open back 40. Customers never see rates.'
+            }
+            error={errors.rate_per_sqft?.message}
+            className="sm:col-span-2"
+          >
+            <input id="o-rate" inputMode="decimal" className={`${inputClass} tabular-nums sm:w-48`} aria-invalid={!!errors.rate_per_sqft} {...register('rate_per_sqft')} />
+          </Field>
+        )}
         {!isChoice && (
           <>
             <p className="rounded-xl bg-surface-2 p-3 text-sm text-muted sm:col-span-2">
@@ -764,7 +818,21 @@ function LineForm({
     ...laborRates.map((r) => [`labor:${r.id}`, r.unit] as const),
   ])
   const selectedUnit = units.get(useWatch({ control, name: 'item' }))
+  const basis = useWatch({ control, name: 'basis' })
   const allowedBases: Basis[] = selectedUnit ? BASES_FOR_UNIT[selectedUnit] : []
+  const factorHint =
+    selectedUnit === 'bar'
+      ? basis === 'area'
+        ? 'Bars per sq ft of design, e.g. 3.5 bars for a 48 × 48 grill (16 sq ft) → 0.2188'
+        : basis === 'fixed'
+          ? 'Bars per piece'
+          : 'How many runs, e.g. 2 (frame and panel); feet needed ÷ bar length, rounded up'
+      : selectedUnit === 'kg'
+        ? basis === 'fixed'
+          ? 'Kilos per piece'
+          : `Kilos per ${basis === 'area' ? 'sq ft' : 'foot'}, e.g. 0.05`
+        : 'How many (e.g. 2 tracks)'
+
   const itemField = register('item', {
     onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
       const unit = units.get(e.target.value)
@@ -796,7 +864,7 @@ function LineForm({
                 .filter((m) => m.is_active || line?.material_id === m.id)
                 .map((m) => (
                   <option key={m.id} value={`material:${m.id}`}>
-                    {m.code} – {m.name} ({UNIT_LABEL[m.unit]})
+                    {m.code} – {m.name} ({unitLabel(m.unit, m.stock_length, m.stock_length_unit)})
                   </option>
                 ))}
             </optgroup>
@@ -856,7 +924,7 @@ function LineForm({
             ))}
           </select>
         </Field>
-        <Field label="Factor" htmlFor="c-factor" required hint="How many (e.g. 2 tracks)" error={errors.factor?.message}>
+        <Field label="Factor" htmlFor="c-factor" required hint={factorHint} error={errors.factor?.message}>
           <input id="c-factor" data-autofocus={line ? true : undefined} inputMode="decimal" className={`${inputClass} tabular-nums`} {...register('factor')} />
         </Field>
         <Field label="Waste (%)" htmlFor="c-waste" required hint="Extra for cutting loss" error={errors.waste_percent?.message}>

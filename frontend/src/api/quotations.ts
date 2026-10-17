@@ -39,7 +39,15 @@ export interface QuotationSummary {
   id: string
   number: string | null
   status: QuotationStatus
-  items: { product_name: string; width_mm: number; height_mm: number; quantity: number }[]
+  items: {
+    product_name: string
+    input_width: string
+    input_height: string
+    input_unit: LengthUnit
+    width_mm: number
+    height_mm: number
+    quantity: number
+  }[]
   total: string
   currency: string
   created_at: string
@@ -60,6 +68,8 @@ export interface QuotationItem {
   input_unit: LengthUnit
   width_mm: number
   height_mm: number
+  /** Area of one piece; null for quotations priced before v2 */
+  area_sqft: string | null
   quantity: number
   /** For the whole quantity, VAT included, rounded up */
   amount: string

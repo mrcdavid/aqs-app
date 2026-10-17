@@ -21,16 +21,26 @@ const percent = z
   .refine((v) => Number(v) <= 100, 'At most 100')
 const mm = z.number({ error: 'Enter a number' }).int().min(1).max(20000)
 
-export const unitSchema = z.enum(['sqm', 'lm', 'piece'])
+export const unitSchema = z.enum(['piece', 'kg', 'ft', 'sqft', 'bar'])
 
-/** Material or labour rate (labour rates simply ignore `category`). */
-export const priceItemSchema = z.object({
-  code,
-  name,
-  category: z.enum(['glass', 'aluminum', 'metal', 'hardware', 'other']),
-  unit: unitSchema,
-  price,
-})
+/** Material or labour rate (labour rates ignore `category` and the bar length). */
+export const priceItemSchema = z
+  .object({
+    code,
+    name,
+    category: z.enum(['glass', 'aluminum', 'metal', 'hardware', 'other']),
+    unit: unitSchema,
+    price,
+    /** Bars only: the length one bar is sold in, e.g. 21 (ft) or 6 (m) */
+    stock_length: z.string().trim(),
+    stock_length_unit: z.enum(['ft', 'm']),
+  })
+  .superRefine((v, ctx) => {
+    const ok = /^\d{1,4}(\.\d{1,2})?$/.test(v.stock_length) && Number(v.stock_length) > 0
+    if (v.unit === 'bar' && !(ok && Number(v.stock_length) <= 1000)) {
+      ctx.addIssue({ code: 'custom', path: ['stock_length'], message: 'Bar length like 21 or 6' })
+    }
+  })
 export type PriceItemForm = z.output<typeof priceItemSchema>
 
 export const productSchema = z
@@ -43,6 +53,10 @@ export const productSchema = z
     max_width_mm: mm,
     min_height_mm: mm,
     max_height_mm: mm,
+    /** per_sqft: sold at owner-set rates per sq ft; computed: template line costs + markup */
+    pricing_method: z.enum(['per_sqft', 'computed']),
+    /** Per-sq-ft products: the product's own rate; chosen options may add theirs */
+    rate_per_sqft: price,
   })
   .refine((p) => p.min_width_mm <= p.max_width_mm, {
     path: ['max_width_mm'],
@@ -63,6 +77,8 @@ export const EMPTY_PRODUCT: ProductForm = {
   max_width_mm: 3000,
   min_height_mm: 300,
   max_height_mm: 2500,
+  pricing_method: 'per_sqft',
+  rate_per_sqft: '0',
 }
 
 export const componentSchema = z.object({
@@ -89,6 +105,8 @@ export const optionSchema = z.object({
   /** Add-ons only (e.g. open back): how much smaller the rest of the window is measured. */
   width_reduction_mm: reduction,
   height_reduction_mm: reduction,
+  /** Per-sq-ft products: added to the rate when chosen (glass type, open back extra) */
+  rate_per_sqft: price,
 })
 export type OptionForm = z.input<typeof optionSchema>
 

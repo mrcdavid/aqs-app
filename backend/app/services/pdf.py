@@ -393,10 +393,14 @@ def render_quotation_pdf(data: PdfInput) -> bytes:
             description.append(_p(f"{choice['group']}: {choice['name']}", s["choice"]))
         if add_ons := [o["name"] for o in item.get("options", [])]:
             description.append(_p(f"With: {', '.join(add_ons)}", s["with"]))
-        size = [
-            _p(f"{_num(inp['width'])} x {_num(inp['height'])} {unit}", s["bold"]),
-            _p(f"{pricing['width_mm']} x {pricing['height_mm']} mm", s["small"]),
-        ]
+        size = [_p(f"{_num(inp['width'])} x {_num(inp['height'])} {unit}", s["bold"])]
+        if "area_sqft" in pricing:  # pricing v2: area in sq ft (and inches, if typed in cm)
+            if inp["unit"] != "in":
+                inches = f"{_num(pricing['width_in'])} x {_num(pricing['height_in'])} in"
+                size.append(_p(inches, s["small"]))
+            size.append(_p(f"{_num(pricing['area_sqft'])} sq ft", s["small"]))
+        else:
+            size.append(_p(f"{pricing['width_mm']} x {pricing['height_mm']} mm", s["small"]))
         rows.append(
             [
                 _p(str(n), s["small"]),

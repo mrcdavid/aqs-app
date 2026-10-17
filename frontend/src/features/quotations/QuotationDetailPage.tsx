@@ -144,7 +144,8 @@ export function QuotationDetailPage() {
                       {trimDecimal(item.input_width)} × {trimDecimal(item.input_height)} {item.input_unit}
                     </span>
                     <span className="text-muted">
-                      ({item.width_mm} × {item.height_mm} mm) · qty {item.quantity}
+                      ({item.area_sqft ? `${trimDecimal(item.area_sqft)} sq ft` : `${item.width_mm} × ${item.height_mm} mm`}) · qty{' '}
+                      {item.quantity}
                     </span>
                   </p>
                   <p className="mt-1 text-sm text-muted">Includes: {item.includes.join(', ')}</p>

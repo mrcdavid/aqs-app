@@ -4,13 +4,16 @@ A web app that makes quotation PDFs for glass, aluminium and metal fabrication j
 (sliding windows, sliding doors, window grills, …).
 
 A customer signs in with their `@up.edu.ph` Google account — or staff quote a walk-in client —
-adds one or more items (product, glass choice, add-ons such as an open back frame, size in cm or
-inches, quantity) and clicks **Process** to get a draft PDF right away. An admin then approves
+adds one or more items (product, glass choice, add-ons such as an open back frame, size in inches
+or cm, quantity) and clicks **Process** to get a draft PDF right away. An admin then approves
 (optionally adjusting the final amount), rejects or cancels it; approved quotes get an official
 number (`AQS-2026-000123`) and a final PDF with the 50/50 payment terms and signature lines.
 
-Prices are always calculated on the server from your price list, rounded up in your favour, and
-shown to clients VAT-inclusive (no VAT line, unit prices or materials). The dashboard shows your
+Prices are always calculated on the server, rounded up in your favour, and are final with VAT
+included (clients never see a VAT line, rates or materials). Sliding windows are sold **per sq ft** at
+rates you set (per glass type, plus extras such as an open back); grills are priced from the **whole
+bars** they use plus labour per grill; materials are entered as you buy them (21-ft bars, kilos,
+pieces, feet, sq ft). The dashboard shows your
 approved business. Detailed business rules: [docs/quotations.md](docs/quotations.md).
 
 | Part      | Tech                                                           | Folder      |
@@ -197,23 +200,34 @@ To stop a server, press `Ctrl + C` in its terminal.
 
 ### First things to do after signing in as super admin
 
-The database starts empty (except default settings: markup 0 %, VAT 12 %, PHP, round up to the
-next ₱100, owner name "Cleo David"). Before anyone can get quotes, set up the admin area:
+The database starts empty (except default settings: markup 0 %, VAT 12 % included in prices, PHP,
+round up to the next ₱100, owner name "Cleo David"). Before anyone can get quotes, set up the admin
+area:
 
 1. **Settings** — business name, address, contact, terms (printed on PDFs), owner name (signature
-   line), markup, VAT, quote validity, and **Round totals up to the next** (100 turns 21,423 into
-   21,500; 0 = off).
-2. **Materials** — e.g. aluminium profiles, glass, rollers, each priced per m², per metre or per piece.
-3. **Labour rates** — e.g. installation per m².
-4. **Products** — for each product set the allowed sizes, then build its **price template**:
-   - **Always included** lines: the parts every unit needs. Each line = a material or labour rate ×
-     how it's measured (area, perimeter, width, height or a fixed count) × factor × waste %.
-   - **Choice groups** for "pick one" questions, e.g. *Glass type* with choices *Ordinary* and
-     *Reflective*, each with its own glass line. The first choice is pre-selected on the forms.
-   - **Add-ons** for optional extras, e.g. *Open back (outer jamb)*. For a frame around the window,
-     set how many mm narrower/shorter the window becomes: the size typed is then the wall opening.
-   - Use the **Price preview** to try sizes, choices and add-ons; it updates as you tick them.
+   line), markup (for products priced from materials), VAT (shown to staff as "included"), quote
+   validity, and **Round totals up to the next** (100 turns 21,423 into 21,500; 0 = off).
+2. **Materials** — at the price you buy them: per **bar** (give the bar length, e.g. aluminium
+   profile *21 ft*, 10 mm square bar *6 m*; quotes always count whole bars), per **kilo** (jamb rubber,
+   vinyl #1), per **piece** (handles, rollers), per **foot** or per **sq ft** (glass).
+3. **Labour rates** — per piece (e.g. per grill), per foot or per sq ft.
+4. **Products** — for each product set the allowed sizes and **how it is priced**:
+   - **Per sq ft** (sliding windows): set a base rate per sq ft. Add a choice group *Glass type*
+     (e.g. *1/4 Bronze* first, *Reflective mirror*, *Smoked*), each with its **rate per sq ft**, and a
+     group *Glass sheet* (*4 x 7 ft* first, *4 x 8 ft*, *4 x 6 ft*, rate 0 — just recorded). Add an
+     add-on *Open back* with its extra rate per sq ft. The material lines you add are a **cost guide**:
+     the price preview shows your cost and margin.
+   - **From materials** (grills): add the lines — e.g. 10 mm square bar measured by **area** with
+     factor = bars per sq ft (a 48 × 48 in design using 3.5 bars → 3.5 ÷ 16 = 0.2188), and labour
+     per grill (fixed, 1). Price = cost + markup.
+   - Each line = a material or labour rate × how it's measured (area, perimeter, width, height or a
+     fixed count) × factor × waste %. **Add-ons** for a frame around the window (open back) can make
+     the rest measured smaller (in mm): the size typed is then the wall opening.
+   - Use the **Price preview** (inches by default) to try sizes, choices and add-ons.
 5. **Users → Add staff account** — create admin accounts (only the super admin can).
+
+When material prices go up, update them under **Materials** (grills follow automatically) and use
+**Settings → Raise all rates** to raise every rate per sq ft by a percentage (with a Yes/No check).
 
 Then sign in as a customer, complete the profile, and create a quotation.
 
@@ -326,8 +340,8 @@ uv run alembic check
 | `relation "..." does not exist` | Tables are missing or outdated — run `uv run alembic upgrade head`. |
 | Staff account locked | 10 failed logins lock it for 15 minutes. Wait, or run `scripts.reset_staff_password`. |
 | Signed out of the admin area | Staff sessions end after 30 minutes without activity (customers: 8 hours). Sign in again. |
-| A product is missing from the quotation form | Its template has no always-included lines, uses an archived material, or every choice of one of its groups uses an archived material. Check it under **Products**. |
-| An add-on or choice doesn't change the price | It has no lines yet — add its material/labour lines in the product's template (the price preview marks it "no lines yet"). |
+| A product is missing from the quotation form | Sold per sq ft but no rate is set anywhere (product or its options); priced from materials but has no always-included lines; uses an archived material; or every choice of one of its groups uses an archived material. Check it under **Products**. |
+| An add-on or choice doesn't change the price | Per sq ft: give it a rate per sq ft. From materials: add its material/labour lines (the price preview marks it "adds nothing yet"). |
 | "Item 2: width must be …" | That item's size is outside the product's allowed range (set on the product). |
 | "Choose one option for Glass type" | Pick one choice in each group (the form pre-selects the first). |
 | "The size is too small for the chosen options" | The opening minus the open back's reduction leaves no window — check the size or the add-on's mm. |

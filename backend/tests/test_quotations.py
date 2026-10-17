@@ -25,7 +25,8 @@ from tests.test_admin_catalog import (
 from tests.test_auth import STAFF_EMAIL, VALID_PROFILE, fake_google, make_staff, staff_login
 
 API = "/api/v1"
-REQUEST = {"width": "120", "height": "100", "unit": "cm", "quantity": 2}
+# 48 x 48 in = 16 sq ft, quantity 2: 13,468.80 -> 13,500.00 (see build_sliding_window)
+REQUEST = {"width": "48", "height": "48", "unit": "in", "quantity": 2}
 CUSTOMER_EMAIL = "juan@up.edu.ph"  # from fake_google
 
 
@@ -92,12 +93,13 @@ async def test_full_flow(customer: AsyncClient, admin: AsyncClient, product_id: 
     q = await request_quote(customer, product_id)
     assert q["status"] == "pending" and q["number"] is None
     item = q["items"][0]
-    assert (item["width_mm"], item["height_mm"], item["quantity"]) == (1200, 1000, 2)
-    assert item["amount"] == "12000.00"  # 11,977.19 rounded up to the next 100
-    assert q["total"] == q["subtotal"] == "12000.00" and q["adjustment"] == "0.00"
-    assert (q["downpayment"], q["balance"]) == ("6000.00", "6000.00")
-    assert len(item["includes"]) == 5
-    for hidden in ("markup", "breakdown", "vat", "vat_percent", "unit_price"):
+    assert (item["width_mm"], item["height_mm"], item["quantity"]) == (1219, 1219, 2)
+    assert item["area_sqft"] == "16.00"
+    assert item["amount"] == "13500.00"  # 13,468.80 rounded up to the next 100
+    assert q["total"] == q["subtotal"] == "13500.00" and q["adjustment"] == "0.00"
+    assert (q["downpayment"], q["balance"]) == ("6750.00", "6750.00")
+    assert len(item["includes"]) == 6
+    for hidden in ("markup", "breakdown", "vat", "vat_percent", "unit_price", "rate_per_sqft"):
         assert hidden not in q and hidden not in item  # never costs, VAT or unit prices
 
     draft = await customer.get(f"{API}/quotations/{q['id']}/pdf")
@@ -114,9 +116,9 @@ async def test_full_flow(customer: AsyncClient, admin: AsyncClient, product_id: 
     year = today_pht().year
     assert approved["number"] == f"AQS-{year}-000001"
     breakdown = approved["items"][0]["breakdown"]
-    assert breakdown["markup"] == "1782.32"  # admins see the full breakdown
-    assert breakdown["total"] == "11977.19"
-    assert approved["total"] == "12000.00" and approved["total_adjusted"] is False
+    assert breakdown["markup"] == "2244.80"  # admins see the full breakdown
+    assert breakdown["total"] == "13468.80" and breakdown["vat_included"] == "1446.43"
+    assert approved["total"] == "13500.00" and approved["total_adjusted"] is False
     assert approved["walk_in"] is False and approved["created_by_email"] == CUSTOMER_EMAIL
     assert date.fromisoformat(approved["valid_until"]) == today_pht() + timedelta(days=30)
 
@@ -145,11 +147,12 @@ async def test_numbers_increment(customer: AsyncClient, admin: AsyncClient, prod
     assert [n[-6:] for n in numbers] == ["000001", "000002"]
 
 
-async def test_inch_input(customer: AsyncClient, product_id: str):
-    q = await request_quote(customer, product_id, width="48", height="36", unit="in", quantity=1)
+async def test_cm_input(customer: AsyncClient, product_id: str):
+    q = await request_quote(customer, product_id, width="120", height="100", unit="cm", quantity=1)
     item = q["items"][0]
-    assert (item["width_mm"], item["height_mm"]) == (1219, 914)
-    assert (item["input_width"], item["input_unit"]) == ("48.00", "in")
+    assert (item["width_mm"], item["height_mm"]) == (1200, 1000)
+    assert (item["input_width"], item["input_unit"]) == ("120.00", "cm")
+    assert item["area_sqft"] == "12.92"  # from the exact inches: 1.2 m² = 12.9167 sq ft
 
 
 # ---------- prices are frozen ----------
@@ -163,9 +166,9 @@ async def test_later_price_change_does_not_alter_quote(
     glass = next(m for m in materials if m["code"] == "GL-6MM")
     await admin.patch(f"{API}/admin/materials/{glass['id']}", json={"unit_price": "5000"})
 
-    assert (await customer.get(f"{API}/quotations/{q['id']}")).json()["total"] == "12000.00"
+    assert (await customer.get(f"{API}/quotations/{q['id']}")).json()["total"] == "13500.00"
     newer = await request_quote(customer, product_id)
-    assert newer["total"] != "12000.00"
+    assert newer["total"] != "13500.00"
 
 
 # ---------- rules ----------
@@ -310,16 +313,17 @@ async def test_pdf_shows_one_amount_payment_terms_and_signatures(
     assert draft.rindex(b"PENDING APPROVAL") > draft.rindex(b"Juan Dela Cruz")
     assert b"PENDING APPROVAL" not in final
     for pdf in (draft, final):
-        assert b"12,000.00" in pdf  # the rounded amount
+        assert b"13,500.00" in pdf  # the rounded amount
+        assert b"48 x 48 in" in pdf and b"16 sq ft" in pdf
         assert b"50% DOWNPAYMENT" in pdf and b"50% UPON COMPLETION AND INSTALLATION" in pdf
-        assert b"6,000.00" in pdf
+        assert b"6,750.00" in pdf
         assert b"Cleo David" in pdf and b"Juan Dela Cruz" in pdf  # owner and client signatures
         # No VAT, exact total or unit price, and no materials or labour (e.g. "GL-6MM item").
         for hidden in (
             b"VAT",
-            b"1,283.27",
-            b"11,977.19",
-            b"5,346.96",
+            b"1,446.43",
+            b"13,468.80",
+            b"6,734.40",
             b"Includes",
             b"GL-6MM",
             b"Installation",
@@ -334,28 +338,28 @@ async def test_approve_with_adjusted_total(
     customer: AsyncClient, admin: AsyncClient, product_id: str, db: AsyncSession
 ):
     q = await request_quote(customer, product_id)
-    r = await admin.post(f"{API}/admin/quotations/{q['id']}/approve", json={"final_total": "12500"})
+    r = await admin.post(f"{API}/admin/quotations/{q['id']}/approve", json={"final_total": "14000"})
     assert r.status_code == 200, r.text
     approved = r.json()
-    assert approved["total"] == "12500.00" and approved["total_adjusted"] is True
-    assert approved["subtotal"] == "12000.00" and approved["adjustment"] == "500.00"
-    assert approved["items"][0]["amount"] == "12000.00"  # the calculation is kept
+    assert approved["total"] == "14000.00" and approved["total_adjusted"] is True
+    assert approved["subtotal"] == "13500.00" and approved["adjustment"] == "500.00"
+    assert approved["items"][0]["amount"] == "13500.00"  # the calculation is kept
 
     mine = (await customer.get(f"{API}/quotations/{q['id']}")).json()
     assert (mine["total"], mine["downpayment"], mine["balance"]) == (
-        "12500.00",
-        "6250.00",
-        "6250.00",
+        "14000.00",
+        "7000.00",
+        "7000.00",
     )
     log = await db.scalar(select(AuditLog).where(AuditLog.action == "quotation.approved"))
-    assert log is not None and log.details["adjusted_from"] == "12000.00"
+    assert log is not None and log.details["adjusted_from"] == "13500.00"
 
 
 async def test_odd_total_splits_exactly(customer: AsyncClient, admin: AsyncClient, product_id: str):
     q = await request_quote(customer, product_id)
-    await admin.post(f"{API}/admin/quotations/{q['id']}/approve", json={"final_total": "12000.01"})
+    await admin.post(f"{API}/admin/quotations/{q['id']}/approve", json={"final_total": "13500.01"})
     mine = (await customer.get(f"{API}/quotations/{q['id']}")).json()
-    assert (mine["downpayment"], mine["balance"]) == ("6000.01", "6000.00")
+    assert (mine["downpayment"], mine["balance"]) == ("6750.01", "6750.00")
 
 
 @pytest.mark.parametrize("bad", ["0", "-5", "12.345", "abc"])
@@ -394,7 +398,7 @@ async def test_staff_quotes_walk_in_client(admin: AsyncClient, product_id: str, 
     assert q["customer"]["full_name"] == "Maria Santos" and q["customer"]["email"] == ""
     assert q["customer"]["contact_number"] == "09171234567"  # spaces removed
     assert q["created_by_email"] == STAFF_EMAIL
-    assert q["total"] == "12000.00" and q["items"][0]["breakdown"]["total"] == "11977.19"
+    assert q["total"] == "13500.00" and q["items"][0]["breakdown"]["total"] == "13468.80"
 
     listed = (await admin.get(f"{API}/admin/quotations", params={"status": "pending"})).json()
     assert [(x["id"], x["walk_in"], x["customer_city"]) for x in listed] == [
@@ -478,15 +482,15 @@ async def test_add_on_is_offered_and_priced(
     ]
 
     plain = await request_quote(customer, product_id)
-    assert plain["total"] == "12000.00" and plain["items"][0]["options"] == []
+    assert plain["total"] == "13500.00" and plain["items"][0]["options"] == []
     extra = await request_quote(customer, product_id, option_ids=[open_back_id])
-    assert extra["total"] == "16800.00"
+    assert extra["total"] == "18100.00"  # (5,612 + 1,920) x 1.2 x 2 = 18,076.80
     assert extra["items"][0]["options"] == ["Open back aluminum"]
-    assert len(extra["items"][0]["includes"]) == 5  # the add-on is listed separately
+    assert len(extra["items"][0]["includes"]) == 6  # the add-on is listed separately
 
     monkeypatch.setattr(reportlab.rl_config, "pageCompression", 0)
     pdf = (await customer.get(f"{API}/quotations/{extra['id']}/pdf")).content
-    assert b"With: Open back aluminum" in pdf and b"16,800.00" in pdf
+    assert b"With: Open back aluminum" in pdf and b"18,100.00" in pdf
     assert b"VAT" not in pdf
 
 
@@ -496,7 +500,7 @@ async def test_admin_sees_add_on_lines(
     q = await request_quote(customer, product_id, option_ids=[open_back_id])
     detail = (await admin.get(f"{API}/admin/quotations/{q['id']}")).json()
     options = [line["option"] for line in detail["items"][0]["breakdown"]["lines"]]
-    assert options.count("Open back aluminum") == 2 and options.count("") == 5
+    assert options.count("Open back aluminum") == 2 and options.count("") == 6
 
 
 async def test_walk_in_quote_with_add_on(admin: AsyncClient, product_id: str, open_back_id: str):
@@ -504,7 +508,7 @@ async def test_walk_in_quote_with_add_on(admin: AsyncClient, product_id: str, op
     r = await admin.post(f"{API}/admin/quotations", json=body)
     assert r.status_code == 201, r.text
     assert r.json()["items"][0]["options"] == ["Open back aluminum"]
-    assert r.json()["total"] == "16800.00"
+    assert r.json()["total"] == "18100.00"
 
 
 async def test_bad_add_ons_are_rejected(

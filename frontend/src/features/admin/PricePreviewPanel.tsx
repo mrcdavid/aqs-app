@@ -1,15 +1,15 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { AlertTriangle, Calculator, PackagePlus } from 'lucide-react'
+import { AlertTriangle, Calculator } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 
 import { adminApi, type PricePreview, type ProductDetail } from '../../api/admin'
-import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Card, ErrorBanner } from '../../components/ui/Card'
 import { Field, inputClass } from '../../components/ui/Field'
 import { messageOf } from '../../lib/errors'
-import { BASIS_LABEL, formatMoney, trimDecimal, UNIT_LABEL } from '../../lib/format'
+import { formatMoney } from '../../lib/format'
+import { BreakdownLines, BreakdownSize, BreakdownSums } from './PriceBreakdown'
 import { previewSchema, type PreviewForm } from './schemas'
 
 export function PricePreviewPanel({ product }: { product: ProductDetail }) {
@@ -18,7 +18,10 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
   const [optionIds, setOptionIds] = useState<string[]>([])
   const [picks, setPicks] = useState<Record<string, string>>({})
   const addOns = product.options.filter((o) => o.group_id === null)
-  const hasLines = (optionId: string) => product.components.some((c) => c.option_id === optionId)
+  const perSqft = product.pricing_method === 'per_sqft'
+  // An add-on adds nothing until it has a line (or, sold per sq ft, a rate).
+  const addsNothing = (o: (typeof addOns)[number]) =>
+    !product.components.some((c) => c.option_id === o.id) && !(perSqft && Number(o.rate_per_sqft) > 0)
   const groups = product.option_groups
     .map((g) => ({ ...g, choices: product.options.filter((o) => o.group_id === g.id) }))
     .filter((g) => g.choices.length > 0)
@@ -28,7 +31,7 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
     g.choices.find((c) => c.id === chosen[g.id])?.id ?? g.choices[0].id
   const { register, handleSubmit, formState } = useForm<PreviewForm>({
     resolver: zodResolver(previewSchema),
-    defaultValues: { width: '120', height: '100', unit: 'cm', quantity: 1 },
+    defaultValues: { width: '48', height: '48', unit: 'in', quantity: 1 },
   })
   const { errors, isSubmitting } = formState
 
@@ -67,8 +70,9 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
   return (
     <Card title="Price preview" icon={Calculator}>
       <p className="mb-4 text-sm text-muted">
-        Try sample sizes to check the template. Ticking an add-on or changing a choice updates the price straight
-        away. Uses current prices and settings; nothing is saved.
+        Try sample sizes to check the price
+        {perSqft ? ', the cost guide and your margin' : ' and the template'}. Ticking an add-on or changing a choice
+        updates it straight away. Uses current prices and settings; nothing is saved.
       </p>
       <form onSubmit={handleSubmit((values) => calculate(values, optionIds, picks))} noValidate className="grid grid-cols-2 items-end gap-3 sm:grid-cols-5">
         <Field label="Width" htmlFor="pv-width" required error={errors.width?.message}>
@@ -79,8 +83,8 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
         </Field>
         <Field label="Unit" htmlFor="pv-unit" required>
           <select id="pv-unit" className={inputClass} {...register('unit')}>
-            <option value="cm">cm</option>
             <option value="in">inch</option>
+            <option value="cm">cm</option>
           </select>
         </Field>
         <Field label="Qty" htmlFor="pv-qty" required error={errors.quantity?.message}>
@@ -125,7 +129,7 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
             <label key={o.id} className="inline-flex cursor-pointer items-center gap-2">
               <input type="checkbox" className="size-4 accent-brand" checked={optionIds.includes(o.id)} onChange={() => toggle(o.id)} />
               {o.name}
-              {!hasLines(o.id) && <span className="text-xs text-muted">(no lines yet, adds nothing)</span>}
+              {addsNothing(o) && <span className="text-xs text-muted">(adds nothing yet)</span>}
             </label>
           ))}
         </fieldset>
@@ -140,68 +144,9 @@ export function PricePreviewPanel({ product }: { product: ProductDetail }) {
                 <AlertTriangle className="size-4 shrink-0" aria-hidden /> {w}
               </p>
             ))}
-            <p className="text-sm text-muted">
-              {result.width_mm} × {result.height_mm} mm · quantity {result.quantity}
-            </p>
-            <div className="overflow-x-auto rounded-xl border border-line">
-              <table className="w-full text-left text-sm tabular-nums">
-                <thead className="bg-surface-2 text-xs tracking-wide text-muted uppercase">
-                  <tr>
-                    <th className="px-3 py-2 font-medium">Line</th>
-                    <th className="px-3 py-2 font-medium">Measured by</th>
-                    <th className="px-3 py-2 text-right font-medium">Qty</th>
-                    <th className="px-3 py-2 text-right font-medium">Price</th>
-                    <th className="px-3 py-2 text-right font-medium">Cost</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.lines.map((l, i) => (
-                    <tr key={i} className="border-t border-line">
-                      <td className="px-3 py-2">
-                        {l.label || l.name}{' '}
-                        {l.option && (
-                          <Badge tone="brand" icon={PackagePlus}>
-                            {l.option}
-                          </Badge>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-muted">
-                        {BASIS_LABEL[l.basis]}
-                        {l.width_mm !== null && (l.width_mm !== result.width_mm || l.height_mm !== result.height_mm) && (
-                          <span className="block text-xs">
-                            at {l.width_mm} × {l.height_mm} mm
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right">{trimDecimal(l.quantity)}</td>
-                      <td className="px-3 py-2 text-right whitespace-nowrap">
-                        {money(l.unit_price)} <span className="text-muted">{UNIT_LABEL[l.unit]}</span>
-                      </td>
-                      <td className="px-3 py-2 text-right">{money(l.cost)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <dl className="ml-auto max-w-sm space-y-1.5 text-sm tabular-nums">
-              {[
-                ['Cost per piece', result.unit_subtotal],
-                [`Customer unit price (+${trimDecimal(result.markup_percent)}% markup)`, result.unit_price],
-                [`Subtotal (× ${result.quantity})`, result.net],
-                [`VAT ${trimDecimal(result.vat_percent)}%`, result.vat],
-                ['Total incl. VAT', result.total],
-                [`Rounded up to the next ${trimDecimal(result.rounding_step)}`, result.rounding],
-              ].map(([label, value]) => (
-                <div key={label} className="flex justify-between gap-4">
-                  <dt className="text-muted">{label}</dt>
-                  <dd>{money(value)}</dd>
-                </div>
-              ))}
-              <div className="bg-brand-gradient mt-2 flex justify-between gap-4 rounded-xl px-4 py-3 text-base font-semibold text-white">
-                <dt>Customer pays</dt>
-                <dd>{money(result.rounded_total)}</dd>
-              </div>
-            </dl>
+            <p className="text-sm text-muted"><BreakdownSize b={result} /></p>
+            <BreakdownLines b={result} money={money} />
+            <BreakdownSums b={result} money={money} amountLabel="Customer pays" amount={result.rounded_total} />
           </div>
         )}
       </div>
