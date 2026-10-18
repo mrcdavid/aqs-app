@@ -217,9 +217,11 @@ area:
      group *Glass sheet* (*4 x 7 ft* first, *4 x 8 ft*, *4 x 6 ft*, rate 0 — just recorded). Add an
      add-on *Open back* with its extra rate per sq ft. The material lines you add are a **cost guide**:
      the price preview shows your cost and margin.
-   - **From materials** (grills): add the lines — e.g. 10 mm square bar measured by **area** with
-     factor = bars per sq ft (a 48 × 48 in design using 3.5 bars → 3.5 ÷ 16 = 0.2188), and labour
-     per grill (fixed, 1). Price = cost + markup.
+   - **From materials** (grills): make the 10 mm square bar a **per bar** material (e.g. ₱300, bar
+     length 6 m). Add it as a line measured by **Area** and use **Work it out from a sample grill**
+     in the line dialog: "3.5 bars for a 48 × 48 in grill" sets the factor (0.2187 bars per sq ft);
+     other sizes scale by area, rounded up to whole bars. Add the labour per grill as a line (per
+     piece, Fixed, factor 1). Price per grill = whole bars × price per bar + labour, + markup.
    - Each line = a material or labour rate × how it's measured (area, perimeter, width, height or a
      fixed count) × factor × waste %. **Add-ons** for a frame around the window (open back) can make
      the rest measured smaller (in mm): the size typed is then the wall opening.

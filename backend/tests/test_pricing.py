@@ -102,6 +102,27 @@ def test_grill_worked_example() -> None:
     assert b.rounded_total == D("2800.00")
 
 
+@pytest.mark.parametrize(
+    ("width", "height", "needed", "bars"),
+    [
+        ("48", "48", "3.4992", 4),  # the sample: 3.5 bars, never an extra one from rounding
+        ("36", "36", "1.9683", 2),  # 9 sq ft
+        ("60", "48", "4.3740", 5),  # 20 sq ft
+    ],
+)
+def test_grill_bars_scale_with_size(width: str, height: str, needed: str, bars: int) -> None:
+    """The admin form's sample grill ("48 x 48 in uses 3.5 bars") gives factor 0.2187 (rounded
+    down); each grill is then whole 6-m bars x price per bar + labour per grill (no markup here)."""
+    grill = [
+        line(Basis.AREA, PriceUnit.BAR, "300", factor="0.2187", stock=("6", "m")),
+        line(Basis.FIXED, PriceUnit.PIECE, "500", kind="labor"),
+    ]
+    b = compute_price(grill, width_in=D(width), height_in=D(height), quantity=2, **PHP)
+    assert (b.lines[0].needed, b.lines[0].quantity) == (D(needed), D(bars))
+    assert b.unit_price == bars * D(300) + D(500)
+    assert b.net == 2 * b.unit_price
+
+
 def test_per_sqft_worked_example() -> None:
     """Window 48 x 48 in, 1/4 bronze 350/sq ft + open back 40/sq ft: 16 * 390 = 6,240 -> 6,300."""
     b = compute_price(

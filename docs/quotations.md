@@ -85,9 +85,10 @@ products follow their material prices instead.
 
 - **Sliding window 48 × 48 in** = 16 sq ft; Glass type 1/4 Bronze ₱350/sq ft + Open back ₱40/sq ft
   → 16 × 390 = ₱6,240 → **₱6,300**. VAT inside: ₱675.
-- **Grill 48 × 48 in**: 10 mm square bar ₱450 per 6-m bar, factor 0.2188 bars/sq ft (3.5 bars ÷
-  16 sq ft) → 3.5008 → **4 bars** = ₱1,800; labour ₱500 per grill; cost ₱2,300 × 1.20 = ₱2,760 →
-  **₱2,800**.
+- **Grill 48 × 48 in**: 10 mm square bar ₱450 per 6-m bar, factor 0.2187 bars/sq ft (the line
+  dialog's sample grill: 3.5 bars ÷ 16 sq ft, rounded down to 4 dp so the sample never gets an extra
+  bar) → 3.4992 → **4 bars** = ₱1,800; labour ₱500 per grill; cost ₱2,300 × 1.20 = ₱2,760 →
+  **₱2,800**. A 36 × 36 in grill (9 sq ft) → 1.9683 → 2 bars; 60 × 48 in (20 sq ft) → 5 bars.
 - **Cost guide**: frame profile ₱1,850 per 21-ft bar, perimeter 16 ft × 2 runs = 32 ft → **2 bars**
   = ₱3,700.
 

@@ -51,6 +51,30 @@ function unitLabel(unit: PriceUnit, length?: string | null, lengthUnit?: string 
   return unit === 'bar' ? `per ${barLabel(length, lengthUnit)}` : UNIT_LABEL[unit]
 }
 
+// Bars measured by area (grills): the factor is bars per sq ft. Owners think in "a 48 × 48 in grill
+// uses 3.5 bars", so the form works it out from a sample, and lists show it back that way.
+// Display-only arithmetic (not money): the server does all pricing.
+const SAMPLE_IN = 48
+const SAMPLE_SQFT = (SAMPLE_IN * SAMPLE_IN) / 144
+
+/** Bars per sq ft from a sample grill, rounded DOWN to the factor's 4 decimals so the sample size
+ * never gets an extra bar from rounding (3.5 bars / 16 sq ft = 0.21875 -> 0.2187 -> 3.4992 -> 4). */
+function barsPerSqft(bars: string, width: string, height: string): string | null {
+  const area = (Number(width) * Number(height)) / 144
+  const factor = Math.floor((Number(bars) / area) * 10000 + 1e-9) / 10000
+  return area > 0 && factor > 0 && factor <= 1000 ? String(factor) : null
+}
+
+const isGrillLine = (c: Component) => c.item_unit === 'bar' && c.basis === 'area'
+
+/** "≈ 3.5 bars (4 whole) for a 48 × 48 in grill" for a bars-per-sq-ft factor. */
+function sampleBars(factor: string): string | null {
+  const bars = Number(factor) * SAMPLE_SQFT
+  if (!(bars > 0)) return null
+  const exact = trimDecimal(bars.toFixed(2))
+  return `≈ ${exact} bars (${Math.ceil(Number(bars.toFixed(4)))} whole) for a ${SAMPLE_IN} × ${SAMPLE_IN} in grill`
+}
+
 export function TemplateEditor({ product, materials, laborRates, onChanged }: Props) {
   const currency = useCurrency()
   const [editing, setEditing] = useState<LineEditing>(null)
@@ -165,6 +189,7 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
             {itemCell(c)}
             <p className="mt-2 text-sm text-muted">
               {BASIS_LABEL[c.basis]} × {trimDecimal(c.factor)} · waste {trimDecimal(c.waste_percent)}%
+              {isGrillLine(c) && <span className="block text-xs">{sampleBars(c.factor)}</span>}
             </p>
             <div className="mt-1 flex items-center justify-between">
               <span className="text-sm tabular-nums">
@@ -198,7 +223,10 @@ export function TemplateEditor({ product, materials, laborRates, onChanged }: Pr
               >
                 <td className="py-2.5 pr-4">{itemCell(c)}</td>
                 <td className="py-2.5 pr-4">{BASIS_LABEL[c.basis]}</td>
-                <td className="py-2.5 pr-4 text-right tabular-nums">{trimDecimal(c.factor)}</td>
+                <td className="py-2.5 pr-4 text-right tabular-nums">
+                  {trimDecimal(c.factor)}
+                  {isGrillLine(c) && <span className="block text-xs whitespace-nowrap text-muted">{sampleBars(c.factor)}</span>}
+                </td>
                 <td className="py-2.5 pr-4 text-right tabular-nums">{trimDecimal(c.waste_percent)}%</td>
                 <td className="py-2.5 pr-4 text-right tabular-nums whitespace-nowrap">
                   {formatMoney(c.item_price, currency)}{' '}
@@ -818,12 +846,13 @@ function LineForm({
     ...laborRates.map((r) => [`labor:${r.id}`, r.unit] as const),
   ])
   const selectedUnit = units.get(useWatch({ control, name: 'item' }))
-  const basis = useWatch({ control, name: 'basis' })
+  const [basis, factor] = useWatch({ control, name: ['basis', 'factor'] })
   const allowedBases: Basis[] = selectedUnit ? BASES_FOR_UNIT[selectedUnit] : []
+  const grill = selectedUnit === 'bar' && basis === 'area'
   const factorHint =
     selectedUnit === 'bar'
       ? basis === 'area'
-        ? 'Bars per sq ft of design, e.g. 3.5 bars for a 48 × 48 grill (16 sq ft) → 0.2188'
+        ? `Bars per sq ft. ${sampleBars(factor) ?? 'Use the sample grill above to work it out.'}`
         : basis === 'fixed'
           ? 'Bars per piece'
           : 'How many runs, e.g. 2 (frame and panel); feet needed ÷ bar length, rounded up'
@@ -924,10 +953,21 @@ function LineForm({
             ))}
           </select>
         </Field>
+        {grill && (
+          <SampleGrill
+            onUse={(value) => setValue('factor', value, { shouldValidate: true, shouldDirty: true })}
+          />
+        )}
         <Field label="Factor" htmlFor="c-factor" required hint={factorHint} error={errors.factor?.message}>
           <input id="c-factor" data-autofocus={line ? true : undefined} inputMode="decimal" className={`${inputClass} tabular-nums`} {...register('factor')} />
         </Field>
-        <Field label="Waste (%)" htmlFor="c-waste" required hint="Extra for cutting loss" error={errors.waste_percent?.message}>
+        <Field
+          label="Waste (%)"
+          htmlFor="c-waste"
+          required
+          hint={grill ? '0 if the bars used already include offcuts' : 'Extra for cutting loss'}
+          error={errors.waste_percent?.message}
+        >
           <input id="c-waste" inputMode="decimal" className={`${inputClass} tabular-nums`} {...register('waste_percent')} />
         </Field>
         <Field
@@ -941,5 +981,33 @@ function LineForm({
         </Field>
       </fieldset>
     </form>
+  )
+}
+
+/** "A 48 × 48 in grill uses 3.5 bars" -> the bars-per-sq-ft factor. Other sizes scale by area. */
+function SampleGrill({ onUse }: { onUse: (factor: string) => void }) {
+  const [bars, setBars] = useState('3.5')
+  const [width, setWidth] = useState(String(SAMPLE_IN))
+  const [height, setHeight] = useState(String(SAMPLE_IN))
+  const factor = barsPerSqft(bars, width, height)
+  const small = `${inputClass} w-20 py-1.5 text-center tabular-nums sm:py-1.5`
+  // These inputs live inside the line form: Enter must not submit it.
+  const noSubmit = (e: React.KeyboardEvent) => e.key === 'Enter' && e.preventDefault()
+  return (
+    <div className="rounded-xl border border-brand/30 bg-brand-soft p-3 text-sm sm:col-span-2">
+      <p className="font-medium">Work it out from a sample grill</p>
+      <p className="text-muted">How many bars does one grill of a known size use? Every other size is scaled by its area and rounded up to whole bars.</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <input aria-label="Bars used" inputMode="decimal" className={small} value={bars} onChange={(e) => setBars(e.target.value)} onKeyDown={noSubmit} />
+        <span>bars for a</span>
+        <input aria-label="Sample width (inches)" inputMode="decimal" className={small} value={width} onChange={(e) => setWidth(e.target.value)} onKeyDown={noSubmit} />
+        <span>×</span>
+        <input aria-label="Sample height (inches)" inputMode="decimal" className={small} value={height} onChange={(e) => setHeight(e.target.value)} onKeyDown={noSubmit} />
+        <span>in grill</span>
+        <Button size="sm" variant="secondary" disabled={!factor} onClick={() => factor && onUse(factor)}>
+          {factor ? `Use factor ${factor}` : 'Enter the bars and size'}
+        </Button>
+      </div>
+    </div>
   )
 }
