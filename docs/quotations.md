@@ -47,6 +47,9 @@ Each line belongs to one of:
 - Offered to clients: an add-on with ≥ 1 line (or, on a per-sq-ft product, a rate > 0) and no
   archived items; a choice with no archived items. If **no** choice of a group can be offered, the
   product can't be quoted at all.
+- A product priced from materials needs at least one line — always included **or** in a choice.
+  All lines may sit in choices, e.g. a grill whose bar and labour depend on its **Metal type**
+  (Solid square bar: 0.25 bars/sq ft + labour ₱250/sq ft; Square tube: its own bar + ₱400/sq ft).
 - **Size reduction** (`width_reduction_mm` / `height_reduction_mm`, 0–2000, add-ons): when chosen,
   the size typed is the **wall opening** — the add-on's own lines use it as is, every other line
   is measured that much smaller (e.g. the window inside an open back frame). Too small → 422.
@@ -64,7 +67,7 @@ Each product has a **pricing method**:
 | Method | Price of one piece | Used for |
 |---|---|---|
 | **Per sq ft** (`per_sqft`) | area × (product's base rate + the rates of the chosen choices and add-ons). No markup. The template is only a **cost guide** (staff see its cost and the margin). | sliding windows (and doors) |
-| **From materials** (`computed`) | Σ line costs × (1 + markup%) (Settings) | grills, anything built from parts |
+| **From materials** (`computed`) | Σ line costs × (1 + markup%) (Settings, applies to the whole cost incl. labour) | grills, anything built from parts |
 
 ```
 amount = price per piece × quantity, rounded UP to the next `rounding_step` (Settings; default 100, 0 = off)
