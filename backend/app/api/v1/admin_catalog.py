@@ -561,10 +561,9 @@ async def price_preview(
     check_dimensions(product, width_mm, height_mm)
     components = await load_components(db, product.id)
     computed = product.pricing_method == PricingMethod.COMPUTED
-    if computed and not any(c.option_id is None for c, _ in components):
+    if computed and not components:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            "Add at least one always-included line to this product",
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Add at least one line to this product"
         )
     picked = pick(
         await load_groups(db, product.id), await load_options(db, product.id), body.option_ids
