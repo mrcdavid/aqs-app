@@ -342,7 +342,7 @@ uv run alembic check
 | `relation "..." does not exist` | Tables are missing or outdated — run `uv run alembic upgrade head`. |
 | Staff account locked | 10 failed logins lock it for 15 minutes. Wait, or run `scripts.reset_staff_password`. |
 | Signed out of the admin area | Staff sessions end after 30 minutes without activity (customers: 8 hours). Sign in again. |
-| A product is missing from the quotation form | Sold per sq ft but no rate is set anywhere (product or its options); priced from materials but has no always-included lines; uses an archived material; or every choice of one of its groups uses an archived material. Check it under **Products**. |
+| A product is missing from the quotation form | Sold per sq ft but no rate is set anywhere (product or its options); priced from materials but has no lines at all; uses an archived material; or every choice of one of its groups uses an archived material. Check it under **Products**. |
 | An add-on or choice doesn't change the price | Per sq ft: give it a rate per sq ft. From materials: add its material/labour lines (the price preview marks it "adds nothing yet"). |
 | "Item 2: width must be …" | That item's size is outside the product's allowed range (set on the product). |
 | "Choose one option for Glass type" | Pick one choice in each group (the form pre-selects the first). |
