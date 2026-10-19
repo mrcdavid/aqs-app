@@ -226,7 +226,7 @@ def compute_price(
     if width_in <= 0 or height_in <= 0 or quantity <= 0:
         raise ValueError("Dimensions and quantity must be positive")
     if method == PricingMethod.COMPUTED and not components:
-        raise ValueError("Product has no components")
+        raise ValueError("This product has no components for these options")
 
     lines = [_line(c, width_in, height_in) for c in components]
     area = area_sqft(width_in, height_in)

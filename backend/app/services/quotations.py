@@ -93,13 +93,16 @@ def _uses_archived_item():  # noqa: ANN202 - SQLAlchemy expression
 def quotable_products_query():  # noqa: ANN201 - SQLAlchemy Select
     """Active products that have a price and no archived always-included line.
 
-    Computed products need always-included lines; per-sq-ft products need a rate (their own or
-    an option's). Add-on lines don't count: an archived add-on item only hides that add-on.
+    Computed products need template lines, always included or in a choice (e.g. a grill whose bar
+    and labour depend on the Metal type); per-sq-ft products need a rate (their own or an
+    option's). Option lines don't count for archiving: an archived item only hides its option, and
+    a group with no option left hides the product (see `offer`).
     """
-    base_line = (ProductComponent.product_id == Product.id) & ProductComponent.option_id.is_(None)
+    any_line = ProductComponent.product_id == Product.id
+    base_line = any_line & ProductComponent.option_id.is_(None)
     rated_option = (ProductOption.product_id == Product.id) & (ProductOption.rate_per_sqft > 0)
     has_price = or_(
-        (Product.pricing_method == PricingMethod.COMPUTED) & exists().where(base_line),
+        (Product.pricing_method == PricingMethod.COMPUTED) & exists().where(any_line),
         (Product.pricing_method == PricingMethod.PER_SQFT)
         & ((Product.rate_per_sqft > 0) | exists().where(rated_option)),
     )
@@ -177,7 +180,7 @@ async def price_product(
     per_sqft = product.pricing_method == PricingMethod.PER_SQFT
     components = await load_components(db, product.id)
     base = [(c, item) for c, item in components if c.option_id is None]
-    if (not base and not per_sqft) or any(not item.is_active for _, item in base):
+    if (not components and not per_sqft) or any(not item.is_active for _, item in base):
         raise NOT_AVAILABLE
 
     groups = await load_groups(db, product.id)
