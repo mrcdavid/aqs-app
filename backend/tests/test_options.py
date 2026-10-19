@@ -12,7 +12,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AuditLog
-from tests.test_admin_catalog import WINDOW, add_open_back, create, make_per_sqft, material
+from tests.test_admin_catalog import (
+    BUSINESS,
+    WINDOW,
+    add_open_back,
+    create,
+    make_per_sqft,
+    material,
+)
 from tests.test_quotations import (  # noqa: F401 - fixtures
     API,
     REQUEST,
@@ -133,6 +140,79 @@ async def test_a_choice_may_have_no_lines(
     q = await request_quote(customer, product_id, option_ids=[none_id])
     assert q["items"][0]["choices"] == [{"group": "Grill", "name": "None"}]
     assert q["total"] == "13500.00"  # same as the plain window
+
+
+# ---------- every line in a choice: a grill priced by its metal type ----------
+
+GRILL = {**WINDOW, "code": "GRILL", "name": "Metal window grill", "category": "window_grill"}
+
+
+async def build_grill(admin: AsyncClient) -> tuple[str, str]:
+    """Metal type: Solid square bar = 0.25 bars per sq ft (4 x 6-m bars for a 48 x 48 in grill) at
+    300 a bar, plus labour 250 per sq ft. Both lines belong to the choice; nothing is always
+    included. Returns (product id, choice id)."""
+    bar = await create(
+        admin,
+        "materials",
+        material("10MM", "bar", "300", "metal", stock_length="6", stock_length_unit="m"),
+    )
+    labour = await create(
+        admin,
+        "labor-rates",
+        {"code": "GRILL-SOLID", "name": "Grill labour", "unit": "sqft", "rate": "250"},
+    )
+    pid = (await create(admin, "products", GRILL))["id"]
+    detail = await create(admin, f"products/{pid}/option-groups", {"name": "Metal type"})
+    group_id = detail["option_groups"][0]["id"]
+    body = {"group_id": group_id, "name": "Solid square bar"}
+    solid = (await create(admin, f"products/{pid}/options", body))["options"][0]["id"]
+    for line in (
+        {"material_id": bar["id"], "basis": "area", "factor": "0.25"},
+        {"labor_rate_id": labour["id"], "basis": "area", "factor": "1"},
+    ):
+        await create(admin, f"products/{pid}/components", {**line, "option_id": solid})
+    return pid, solid
+
+
+@pytest.mark.parametrize(
+    ("size", "bars", "total"),
+    [
+        ("48", "4.0000", "6800.00"),  # (4 x 300 + 16 x 250) x 1.30 = 6,760 -> 6,800
+        ("36", "3.0000", "4100.00"),  # 2.25 -> 3 bars: (900 + 9 x 250) x 1.30 = 4,095 -> 4,100
+    ],
+)
+async def test_grill_priced_by_metal_type(
+    customer: AsyncClient, admin: AsyncClient, size: str, bars: str, total: str
+):
+    pid, solid = await build_grill(admin)
+    settings = {"markup_percent": "30", "vat_percent": "12", "currency": "PHP", **BUSINESS}
+    assert (await admin.put(f"{ADMIN}/pricing-settings", json=settings)).status_code == 200
+
+    grill = next(
+        p for p in (await customer.get(f"{API}/catalog/products")).json() if p["id"] == pid
+    )
+    groups = [(g["name"], [c["name"] for c in g["choices"]]) for g in grill["choice_groups"]]
+    assert groups == [("Metal type", ["Solid square bar"])]
+
+    q = await request_quote(customer, pid, width=size, height=size, quantity=1, option_ids=[solid])
+    assert q["total"] == total
+    assert q["items"][0]["choices"] == [{"group": "Metal type", "name": "Solid square bar"}]
+    breakdown = (await admin.get(f"{ADMIN}/quotations/{q['id']}")).json()["items"][0]["breakdown"]
+    assert [line["quantity"] for line in breakdown["lines"]][0] == bars  # whole 6-m bars
+
+    size_body = {"width": size, "height": size, "unit": "in", "option_ids": [solid]}
+    preview = await admin.post(f"{ADMIN}/products/{pid}/price-preview", json=size_body)
+    assert preview.status_code == 200 and preview.json()["rounded_total"] == total
+
+
+async def test_computed_product_without_lines_is_hidden(customer: AsyncClient, admin: AsyncClient):
+    pid = (await create(admin, "products", GRILL))["id"]
+    assert all(p["id"] != pid for p in (await customer.get(f"{API}/catalog/products")).json())
+    r = await admin.post(
+        f"{ADMIN}/products/{pid}/price-preview", json={"width": "48", "height": "48", "unit": "in"}
+    )
+    assert r.status_code == 422 and r.json()["detail"] == "Add at least one line to this product"
+    assert (await customer.post(f"{API}/quotations", json=quote_body(pid))).status_code == 404
 
 
 # ---------- open back: the size typed is the wall opening ----------
