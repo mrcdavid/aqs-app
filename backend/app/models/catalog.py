@@ -23,18 +23,22 @@ opening, the option's own lines use it as is, and every other line is measured t
 """
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    text,
     true,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -141,9 +145,16 @@ class Product(UUIDPk, Timestamps, Base):
             "min_height_mm > 0 AND min_height_mm <= max_height_mm", name="height_range"
         ),
         CheckConstraint("rate_per_sqft >= 0", name="rate_per_sqft_nonnegative"),
+        # Unique among products that aren't deleted, so a deleted product's code can be reused.
+        Index(
+            "uq_products_code_live",
+            "code",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
-    code: Mapped[str] = mapped_column(String(30), unique=True)
+    code: Mapped[str] = mapped_column(String(30))
     name: Mapped[str] = mapped_column(String(120))
     category: Mapped[ProductCategory] = mapped_column(str_enum(ProductCategory, "category"))
     description: Mapped[str] = mapped_column(Text, server_default="", default="")
@@ -159,6 +170,10 @@ class Product(UUIDPk, Timestamps, Base):
     )
     # Per-sq-ft products: base selling rate (VAT included), plus the chosen options' rates.
     rate_per_sqft: Mapped[Decimal] = mapped_column(Money, server_default="0", default=Decimal(0))
+    # Deleted by staff after being quoted: hidden everywhere, template removed; the row stays only
+    # for the quotations that used it (a product never quoted is removed for real instead).
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
 
 
 class ProductOptionGroup(UUIDPk, Timestamps, Base):

@@ -110,6 +110,7 @@ def quotable_products_query():  # noqa: ANN201 - SQLAlchemy Select
         select(Product)
         .where(
             Product.is_active.is_(True),
+            Product.deleted_at.is_(None),
             has_price,
             ~exists().where(base_line, _uses_archived_item()),
         )
@@ -175,7 +176,7 @@ async def price_product(
 
     `option_ids` holds the chosen add-ons and exactly one choice per group.
     """
-    if not product.is_active:
+    if not product.is_active or product.deleted_at is not None:
         raise NOT_AVAILABLE
     per_sqft = product.pricing_method == PricingMethod.PER_SQFT
     components = await load_components(db, product.id)
@@ -268,7 +269,7 @@ async def _price_item(
     db: AsyncSession, settings: PricingSettings, position: int, body: QuotationItemIn
 ) -> QuotationItem:
     product = await db.get(Product, body.product_id)
-    if product is None:
+    if product is None or product.deleted_at is not None:
         raise NOT_AVAILABLE
     width_mm, height_mm = to_mm(body.width, body.unit), to_mm(body.height, body.unit)
     check_dimensions(product, width_mm, height_mm)

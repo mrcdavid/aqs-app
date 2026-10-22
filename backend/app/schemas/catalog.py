@@ -288,6 +288,11 @@ class ComponentOut(BaseModel):
     sort_order: int
 
 
+class ProductDeletedOut(BaseModel):
+    # True: it was quoted, so it's hidden but kept for those quotations; False: removed for real.
+    kept_for_quotations: bool
+
+
 class ProductDetailOut(ProductOut):
     option_groups: list[OptionGroupOut]
     options: list[OptionOut]

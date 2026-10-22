@@ -52,10 +52,21 @@ async def get_or_404[T](db: AsyncSession, model: type[T], id_: uuid.UUID, what: 
     return obj
 
 
+async def get_product_or_404(db: AsyncSession, product_id: uuid.UUID) -> Product:
+    """A product staff can see and change: deleted ones look like 404."""
+    product = await db.get(Product, product_id)
+    if product is None or product.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Product not found")
+    return product
+
+
 async def ensure_code_free(
     db: AsyncSession, model: type[Material | LaborRate | Product], code: str, what: str
 ) -> None:
-    if await db.scalar(select(model.id).where(model.code == code)):
+    stmt = select(model.id).where(model.code == code)
+    if model is Product:  # a deleted product's code can be used again
+        stmt = stmt.where(Product.deleted_at.is_(None))
+    if await db.scalar(stmt):
         raise HTTPException(status.HTTP_409_CONFLICT, f"{what} code {code} already exists")
 
 
