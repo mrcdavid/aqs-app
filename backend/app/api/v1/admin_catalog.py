@@ -1,15 +1,17 @@
 """Admin catalogue: materials, labour rates, products + templates, pricing settings.
 
-Staff only (admin, super_admin). Nothing here is hard-deleted except template lines and add-ons;
-materials, labour rates and products are archived with is_active=false.
+Staff only (admin, super_admin). Materials, labour rates and products can be archived
+(is_active=false). Materials and labour rates can be deleted only while no template uses them;
+products can be deleted any time: never quoted -> removed, quoted -> hidden but kept (deleted_at).
 Every change is audited with before/after values.
 """
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.core.deps import DB, StaffUser
 from app.models import (
@@ -21,6 +23,7 @@ from app.models import (
     ProductComponent,
     ProductOption,
     ProductOptionGroup,
+    QuotationItem,
 )
 from app.schemas.catalog import (
     ComponentIn,
@@ -42,6 +45,7 @@ from app.schemas.catalog import (
     PricePreviewOut,
     PricingSettingsIn,
     PricingSettingsOut,
+    ProductDeletedOut,
     ProductDetailOut,
     ProductIn,
     ProductOut,
@@ -58,6 +62,7 @@ from app.services.catalog import (
     get_option,
     get_or_404,
     get_pricing_settings,
+    get_product_or_404,
     load_components,
     load_options,
 )
@@ -373,7 +378,9 @@ async def _product_detail(db: DB, product: Product) -> ProductDetailOut:
 @router.get("/products")
 async def list_products(user: StaffUser, db: DB) -> list[ProductOut]:
     rows = await db.scalars(
-        select(Product).order_by(Product.is_active.desc(), Product.category, Product.name)
+        select(Product)
+        .where(Product.deleted_at.is_(None))
+        .order_by(Product.is_active.desc(), Product.category, Product.name)
     )
     return [ProductOut.model_validate(p) for p in rows]
 
@@ -402,7 +409,7 @@ async def create_product(
 
 @router.get("/products/{product_id}")
 async def get_product(product_id: uuid.UUID, user: StaffUser, db: DB) -> ProductDetailOut:
-    product = await get_or_404(db, Product, product_id, "Product")
+    product = await get_product_or_404(db, product_id)
     return await _product_detail(db, product)
 
 
@@ -410,7 +417,7 @@ async def get_product(product_id: uuid.UUID, user: StaffUser, db: DB) -> Product
 async def update_product(
     product_id: uuid.UUID, body: ProductUpdate, user: StaffUser, db: DB, request: Request
 ) -> ProductDetailOut:
-    product = await get_or_404(db, Product, product_id, "Product")
+    product = await get_product_or_404(db, product_id)
     values = _patch_values(body)
     if "code" in values and values["code"] != product.code:
         await ensure_code_free(db, Product, values["code"], "Product")
@@ -437,6 +444,48 @@ async def update_product(
     return await _product_detail(db, product)
 
 
+@router.delete("/products/{product_id}")
+async def delete_product(
+    product_id: uuid.UUID, user: StaffUser, db: DB, request: Request
+) -> ProductDeletedOut:
+    """Delete a product and its template (lines, choices, add-ons).
+
+    Never quoted: removed for real. Quoted: hidden everywhere (lists, catalogue, quote forms) but
+    the row stays, because its quotations point at it; they keep their own copy of the prices.
+    """
+    product = await get_product_or_404(db, product_id)
+    quoted = (
+        await db.scalar(
+            select(QuotationItem.id).where(QuotationItem.product_id == product.id).limit(1)
+        )
+    ) is not None
+    lines = await db.scalar(
+        select(func.count())
+        .select_from(ProductComponent)
+        .where(ProductComponent.product_id == product.id)
+    )
+    before = audit.snapshot(product, PRODUCT_FIELDS)
+    if quoted:
+        for model in (ProductComponent, ProductOption, ProductOptionGroup):
+            await db.execute(delete(model).where(model.product_id == product.id))
+        product.is_active = False
+        product.deleted_at = datetime.now(UTC)
+        product.deleted_by = user.id
+    else:
+        await db.delete(product)  # its template goes with it (ON DELETE CASCADE)
+    audit.record(
+        db,
+        "product.deleted",
+        request=request,
+        actor_id=user.id,
+        entity="product",
+        entity_id=product_id,
+        details={"before": before, "lines_removed": lines or 0, "kept_for_quotations": quoted},
+    )
+    await db.commit()
+    return ProductDeletedOut(kept_for_quotations=quoted)
+
+
 # ---------- product template (components) ----------
 
 
@@ -444,7 +493,7 @@ async def update_product(
 async def add_component(
     product_id: uuid.UUID, body: ComponentIn, user: StaffUser, db: DB, request: Request
 ) -> ProductDetailOut:
-    product = await get_or_404(db, Product, product_id, "Product")
+    product = await get_product_or_404(db, product_id)
     item: Material | LaborRate
     if body.material_id is not None:
         item = await get_or_404(db, Material, body.material_id, "Material")
@@ -495,7 +544,7 @@ async def update_component(
     db: DB,
     request: Request,
 ) -> ProductDetailOut:
-    product = await get_or_404(db, Product, product_id, "Product")
+    product = await get_product_or_404(db, product_id)
     component = await _get_component(db, product_id, component_id)
     values = _patch_values(body)
     if "option_id" in body.model_fields_set:
@@ -532,7 +581,7 @@ async def update_component(
 async def remove_component(
     product_id: uuid.UUID, component_id: uuid.UUID, user: StaffUser, db: DB, request: Request
 ) -> ProductDetailOut:
-    product = await get_or_404(db, Product, product_id, "Product")
+    product = await get_product_or_404(db, product_id)
     component = await _get_component(db, product_id, component_id)
     audit.record(
         db,
@@ -556,7 +605,7 @@ async def price_preview(
     product_id: uuid.UUID, body: PricePreviewIn, user: StaffUser, db: DB
 ) -> PricePreviewOut:
     """Try a product template with sample dimensions. Nothing is saved."""
-    product = await get_or_404(db, Product, product_id, "Product")
+    product = await get_product_or_404(db, product_id)
     width_mm, height_mm = to_mm(body.width, body.unit), to_mm(body.height, body.unit)
     check_dimensions(product, width_mm, height_mm)
     components = await load_components(db, product.id)
@@ -624,7 +673,7 @@ async def _get_group(db: DB, product_id: uuid.UUID, group_id: uuid.UUID) -> Prod
 async def add_option(
     product_id: uuid.UUID, body: OptionIn, user: StaffUser, db: DB, request: Request
 ) -> ProductDetailOut:
-    product = await get_or_404(db, Product, product_id, "Product")
+    product = await get_product_or_404(db, product_id)
     if body.group_id is not None:
         await _get_group(db, product.id, body.group_id)
     await _ensure_option_name_free(db, product.id, body.group_id, body.name)
@@ -653,7 +702,7 @@ async def update_option(
     db: DB,
     request: Request,
 ) -> ProductDetailOut:
-    product = await get_or_404(db, Product, product_id, "Product")
+    product = await get_product_or_404(db, product_id)
     option = await get_option(db, product_id, option_id)
     values = _patch_values(body)
     if "name" in values:
@@ -683,7 +732,7 @@ async def remove_option(
     product_id: uuid.UUID, option_id: uuid.UUID, user: StaffUser, db: DB, request: Request
 ) -> ProductDetailOut:
     """Delete an add-on and its lines. Existing quotations keep their own copy of the prices."""
-    product = await get_or_404(db, Product, product_id, "Product")
+    product = await get_product_or_404(db, product_id)
     option = await get_option(db, product_id, option_id)
     lines = await db.scalar(
         select(func.count())
@@ -728,7 +777,7 @@ async def _ensure_group_name_free(
 async def add_option_group(
     product_id: uuid.UUID, body: OptionGroupIn, user: StaffUser, db: DB, request: Request
 ) -> ProductDetailOut:
-    product = await get_or_404(db, Product, product_id, "Product")
+    product = await get_product_or_404(db, product_id)
     await _ensure_group_name_free(db, product.id, body.name)
     group = ProductOptionGroup(product_id=product.id, **body.model_dump())
     db.add(group)
@@ -755,7 +804,7 @@ async def update_option_group(
     db: DB,
     request: Request,
 ) -> ProductDetailOut:
-    product = await get_or_404(db, Product, product_id, "Product")
+    product = await get_product_or_404(db, product_id)
     group = await _get_group(db, product_id, group_id)
     values = _patch_values(body)
     if "name" in values:
@@ -783,7 +832,7 @@ async def remove_option_group(
     product_id: uuid.UUID, group_id: uuid.UUID, user: StaffUser, db: DB, request: Request
 ) -> ProductDetailOut:
     """Delete a group with its choices and their lines. Quotations keep their own copy."""
-    product = await get_or_404(db, Product, product_id, "Product")
+    product = await get_product_or_404(db, product_id)
     group = await _get_group(db, product_id, group_id)
     choices = await db.scalar(
         select(func.count()).select_from(ProductOption).where(ProductOption.group_id == group.id)
@@ -822,7 +871,7 @@ async def raise_rates(
     products = list(
         await db.scalars(
             select(Product)
-            .where(Product.rate_per_sqft > 0)
+            .where(Product.rate_per_sqft > 0, Product.deleted_at.is_(None))
             .order_by(Product.code)
             .with_for_update()
         )
