@@ -18,9 +18,16 @@ the code is the final word: `backend/app/services/` (`pricing.py`, `options.py`,
 
 A bar material has a **bar length** (`stock_length` + `ft`/`m`); its price is for one whole bar and
 templates always count **whole bars, rounded up**. **Labour rates** are per piece (e.g. per grill or
-per window), per foot or per sq ft. An item's unit can't change while a template uses it. Products
-are archived, never deleted; materials / labour rates can be archived, or deleted only when no
-template uses them (409).
+per window), per foot or per sq ft. An item's unit can't change while a template uses it.
+Materials / labour rates can be archived, or deleted only when no template uses them (409).
+
+**Products** can be edited, archived (hidden from quote forms, restorable) or **deleted** by staff
+(admin and super admin; Products list or product page → Delete, with a Yes / No confirmation).
+Deleting removes the product's template (lines, choices, add-ons). A product **never quoted** is
+then removed for good; one that **was quoted** is only marked deleted (`deleted_at`, `deleted_by`):
+hidden from every list, the catalogue and quote forms, while its quotations and PDFs still show it
+(they keep their own snapshot). Either way its code can be reused and it is audited
+(`product.deleted`, with `kept_for_quotations`).
 
 A product's **template** lines are each one material or labour rate, measured from the size typed
 (in **feet / sq ft**, worked out from the exact inches):
@@ -171,6 +178,7 @@ for review" = all pending now. Deleted quotations never count.
 | 0007 | several items per quotation (`quotation_items`; old quotes became one-item quotes) |
 | 0008 | soft delete of quotations (`deleted_at`, `deleted_by`) |
 | 0009 | pricing v2: units piece/kg/ft/sqft/bar (m² and m prices converted), bar lengths, `products.pricing_method` + `rate_per_sqft`, `product_options.rate_per_sqft` |
+| 0010 | product delete: `products.deleted_at` / `deleted_by`; product codes unique among products not deleted (partial unique index) |
 
 `tests/test_migrations.py` round-trips a real quotation through 0007, and metric prices through
 0009 (and back), to prove no data is lost.

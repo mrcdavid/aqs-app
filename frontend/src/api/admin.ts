@@ -334,6 +334,9 @@ export const adminApi = {
   createProduct: (b: Body) => api<ProductDetail>('/admin/products', json('POST', b)),
   updateProduct: (id: string, b: Body) =>
     api<ProductDetail>(`/admin/products/${id}`, json('PATCH', b)),
+  /** Never quoted: removed. Quoted: hidden everywhere but kept for its quotations. */
+  deleteProduct: (id: string) =>
+    api<{ kept_for_quotations: boolean }>(`/admin/products/${id}`, { method: 'DELETE' }),
 
   addComponent: (productId: string, b: Body) =>
     api<ProductDetail>(`/admin/products/${productId}/components`, json('POST', b)),

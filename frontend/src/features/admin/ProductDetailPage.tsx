@@ -1,6 +1,6 @@
-import { Archive, ArchiveRestore, Calculator, Info, Package, Pencil, Ruler, Tag } from 'lucide-react'
+import { Archive, ArchiveRestore, Calculator, Info, Package, Pencil, Ruler, Tag, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { useLoaderData, useRevalidator } from 'react-router'
+import { useLoaderData, useNavigate, useRevalidator } from 'react-router'
 
 import { adminApi } from '../../api/admin'
 import { StatusBadge } from '../../components/ui/Badge'
@@ -11,6 +11,7 @@ import { formatMoney, PRODUCT_CATEGORY_LABEL } from '../../lib/format'
 import { confirmAction, toast } from '../../stores/feedback'
 import type { productDetailLoader } from './loaders'
 import { PricePreviewPanel } from './PricePreviewPanel'
+import { deleteProduct, productFormValues } from './productActions'
 import { ProductFormModal } from './ProductForm'
 import { TemplateEditor } from './TemplateEditor'
 import { useCurrency } from './useCurrency'
@@ -18,9 +19,20 @@ import { useCurrency } from './useCurrency'
 export function ProductDetailPage() {
   const { product, materials, laborRates } = useLoaderData<typeof productDetailLoader>()
   const { revalidate } = useRevalidator()
+  const navigate = useNavigate()
   const currency = useCurrency()
   const [editing, setEditing] = useState(false)
   const [archiving, setArchiving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  async function onDelete() {
+    setDeleting(true)
+    try {
+      if (await deleteProduct(product)) navigate('/admin/products')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   async function toggleActive() {
     if (product.is_active) {
@@ -63,6 +75,9 @@ export function ProductDetailPage() {
               className="flex-1 sm:flex-none"
             >
               {product.is_active ? 'Archive' : 'Restore'}
+            </Button>
+            <Button variant="danger-soft" icon={Trash2} loading={deleting} onClick={onDelete} className="flex-1 sm:flex-none">
+              Delete
             </Button>
           </>
         }
@@ -126,18 +141,7 @@ export function ProductDetailPage() {
         open={editing}
         mode="edit"
         code={product.code}
-        initial={{
-          code: product.code,
-          name: product.name,
-          category: product.category,
-          description: product.description,
-          min_width_mm: product.min_width_mm,
-          max_width_mm: product.max_width_mm,
-          min_height_mm: product.min_height_mm,
-          max_height_mm: product.max_height_mm,
-          pricing_method: product.pricing_method,
-          rate_per_sqft: product.rate_per_sqft,
-        }}
+        initial={productFormValues(product)}
         onClose={() => setEditing(false)}
         onSave={async (values) => {
           await adminApi.updateProduct(product.id, values)
