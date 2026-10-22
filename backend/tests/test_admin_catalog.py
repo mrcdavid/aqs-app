@@ -5,11 +5,11 @@ from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
-from app.models import AuditLog, Role
+from app.models import AuditLog, ProductComponent, Role
 from tests.test_auth import fake_google, make_staff, staff_login
 
 API = "/api/v1/admin"
@@ -620,3 +620,42 @@ async def test_raise_rates(admin: AsyncClient, db: AsyncSession):
 async def test_raise_rates_bounds(admin: AsyncClient, percent: str):
     r = await admin.post(f"{API}/pricing/raise-rates", json={"percent": percent})
     assert r.status_code == 422
+
+
+# ---------- deleting products ----------
+
+
+async def test_delete_unquoted_product_removes_it(admin: AsyncClient, db: AsyncSession):
+    pid = await build_sliding_window(admin)
+    await add_open_back(admin, pid)
+    r = await admin.delete(f"{API}/products/{pid}")
+    assert r.status_code == 200 and r.json() == {"kept_for_quotations": False}
+    assert (await admin.get(f"{API}/products/{pid}")).status_code == 404
+    assert (await admin.get(f"{API}/products")).json() == []
+    assert await db.scalar(select(func.count()).select_from(ProductComponent)) == 0
+    # Its materials are no longer used by any template, so they can be deleted too.
+    glass = next(m for m in (await admin.get(f"{API}/materials")).json() if m["code"] == "GL-6MM")
+    assert (await admin.delete(f"{API}/materials/{glass['id']}")).status_code == 204
+
+    entry = await db.scalar(select(AuditLog).where(AuditLog.action == "product.deleted"))
+    assert entry is not None and entry.entity_id == pid
+    assert entry.details["kept_for_quotations"] is False and entry.details["lines_removed"] == 8
+    assert entry.details["before"]["code"] == "SW-STD"
+    assert (await admin.delete(f"{API}/products/{pid}")).status_code == 404  # already gone
+
+
+async def test_super_admin_can_delete_products(client: AsyncClient, db: AsyncSession):
+    await make_staff(db, Role.SUPER_ADMIN)
+    assert (await staff_login(client)).status_code == 200
+    pid = (await create(client, "products", WINDOW))["id"]
+    assert (await client.delete(f"{API}/products/{pid}")).status_code == 200
+
+
+async def test_customers_cannot_delete_products(
+    client: AsyncClient, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    missing = f"{API}/products/{uuid.uuid4()}"
+    assert (await client.delete(missing)).status_code == 401
+    fake_google(monkeypatch)
+    await client.get("/api/v1/auth/google/callback")
+    assert (await client.delete(missing)).status_code == 403

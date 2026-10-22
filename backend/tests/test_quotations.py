@@ -585,3 +585,39 @@ async def test_customers_cannot_use_the_staff_cancel(customer: AsyncClient, prod
     q = await request_quote(customer, product_id)
     r = await customer.post(f"{API}/admin/quotations/{q['id']}/cancel", json={})
     assert r.status_code == 403
+
+
+# ---------- deleting a product that was quoted ----------
+
+
+async def test_deleting_a_quoted_product_keeps_its_quotations(
+    customer: AsyncClient, admin: AsyncClient, product_id: str
+):
+    q = await request_quote(customer, product_id)
+    await admin.post(f"{API}/admin/quotations/{q['id']}/approve", json={})
+    r = await admin.delete(f"{API}/admin/products/{product_id}")
+    assert r.status_code == 200 and r.json() == {"kept_for_quotations": True}
+
+    # Hidden everywhere...
+    assert (await admin.get(f"{API}/admin/products/{product_id}")).status_code == 404
+    assert (await admin.get(f"{API}/admin/products")).json() == []
+    assert (await customer.get(f"{API}/catalog/products")).json() == []
+    assert (await customer.post(f"{API}/quotations", json=one(product_id))).status_code == 404
+    assert (await admin.delete(f"{API}/admin/products/{product_id}")).status_code == 404
+
+    # ...but its quotation and PDF are untouched,
+    mine = (await customer.get(f"{API}/quotations/{q['id']}")).json()
+    assert (mine["items"][0]["product_name"], mine["total"]) == (
+        "Standard sliding window",
+        "13500.00",
+    )
+    assert (await customer.get(f"{API}/quotations/{q['id']}/pdf")).status_code == 200
+    assert (await admin.get(f"{API}/admin/quotations/{q['id']}")).status_code == 200
+
+    # its template is gone (so its materials can be deleted), and its code can be used again.
+    glass = next(
+        m for m in (await admin.get(f"{API}/admin/materials")).json() if m["code"] == "GL-6MM"
+    )
+    assert (await admin.delete(f"{API}/admin/materials/{glass['id']}")).status_code == 204
+    again = await create(admin, "products", WINDOW)
+    assert again["code"] == "SW-STD" and again["id"] != product_id
